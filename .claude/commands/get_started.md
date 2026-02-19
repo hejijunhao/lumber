@@ -1,0 +1,1 @@
+To get started, look at docs/vision.md and docs/changelog.md (first 200 lines or so, as its a long file) to familiarise yourself with what we're building.

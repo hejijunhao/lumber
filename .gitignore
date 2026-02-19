@@ -1,0 +1,18 @@
+# Binaries
+/bin/
+/lumber
+
+# Models (downloaded, not committed)
+/models/*.onnx
+/models/*.bin
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Go
+/vendor/
