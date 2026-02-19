@@ -10,7 +10,8 @@
       "Bash(curl:*)",
       "Bash(ldconfig:*)",
       "Bash(go get:*)",
-      "Bash(LD_LIBRARY_PATH=/home/pkhelfried/crimson_sun/lumber/models go test:*)"
+      "Bash(LD_LIBRARY_PATH=/home/pkhelfried/crimson_sun/lumber/models go test:*)",
+      "Bash(LD_LIBRARY_PATH=./models go test:*)"
     ]
   }
 }

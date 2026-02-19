@@ -9,6 +9,7 @@
 /models/vocab.txt
 /models/tokenizer_config.json
 /models/libonnxruntime.so
+/models/2_Dense/
 
 # IDE
 .idea/

@@ -36,7 +36,7 @@ From `tokenizer_config.json`:
 - Special token IDs: `[PAD]=0`, `[UNK]=100`, `[CLS]=101`, `[SEP]=102`, `[MASK]=103`
 - Padding side: right
 
-Model output: 1024-dimensional embeddings (confirmed by plan; to be verified empirically in Section 1 via ONNX model inspection).
+Model output: ONNX base transformer outputs 384-dim per-token hidden states. The full 1024-dim embedding requires mean pooling → dense projection via `2_Dense/model.safetensors` (a `[1024, 384]` linear layer, no bias). Projection weights still need to be added to the download target.
 
 ## Files Changed
 

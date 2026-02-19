@@ -1,8 +1,9 @@
 .PHONY: build test lint clean download-model
 
-MODEL_REPO := onnx-community/mdbr-leaf-mt-ONNX
-MODEL_BASE := https://huggingface.co/$(MODEL_REPO)/resolve/main
-MODEL_DIR  := models
+MODEL_REPO  := onnx-community/mdbr-leaf-mt-ONNX
+MODEL_BASE  := https://huggingface.co/$(MODEL_REPO)/resolve/main
+OFFICIAL_BASE := https://huggingface.co/MongoDB/mdbr-leaf-mt/resolve/main
+MODEL_DIR   := models
 
 build:
 	go build -o bin/lumber ./cmd/lumber
@@ -28,6 +29,12 @@ download-model:
 		curl -fSL -o $(MODEL_DIR)/vocab.txt            "$(MODEL_BASE)/vocab.txt"; \
 		curl -fSL -o $(MODEL_DIR)/tokenizer_config.json "$(MODEL_BASE)/tokenizer_config.json"; \
 		echo "Download complete."; \
+	fi
+	@if [ ! -f $(MODEL_DIR)/2_Dense/model.safetensors ]; then \
+		echo "Downloading projection layer weights (~1.6MB)..."; \
+		mkdir -p $(MODEL_DIR)/2_Dense; \
+		curl -fSL --progress-bar -o $(MODEL_DIR)/2_Dense/model.safetensors "$(OFFICIAL_BASE)/2_Dense/model.safetensors"; \
+		curl -fSL -o $(MODEL_DIR)/2_Dense/config.json                      "$(OFFICIAL_BASE)/2_Dense/config.json"; \
 	fi
 	@if [ ! -f $(MODEL_DIR)/libonnxruntime.so ]; then \
 		ORT_SO=$$(find $$(go env GOMODCACHE) -path "*/yalue/onnxruntime_go@*/test_data/onnxruntime_arm64.so" 2>/dev/null | head -1); \

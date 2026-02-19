@@ -34,18 +34,29 @@ Replace the stubbed `ONNXEmbedder` with a working local embedder that converts t
 - *E5-small-v2* — requires mandatory query prefixes, lower scores than BGE/GTE.
 
 **Files to download:**
-- `model.onnx` (+ `model.onnx_data` if weights are external) — the ONNX-exported model (~91MB fp32, ~23MB int8 quantized)
+- `model_quantized.onnx` (+ `model_quantized.onnx_data`) — the ONNX-exported base transformer (~23MB int8 quantized)
 - `vocab.txt` — WordPiece vocabulary (~30,522 tokens)
 - `tokenizer_config.json` — tokenizer settings (max length, special tokens)
+- `2_Dense/model.safetensors` — projection layer weights (~1.57MB), maps 384 → 1024
+
+**Model architecture (sentence-transformers 3-stage pipeline):**
+The ONNX export only covers stage 1 (the base transformer). Stages 2–3 must be replicated in Go:
+
+1. **Transformer** (ONNX) — `input_ids`, `attention_mask`, `token_type_ids` → `last_hidden_state: float32[batch, seq, 384]`
+2. **Mean pooling** (Go) — pool non-padding tokens → `float32[batch, 384]`
+3. **Dense projection** (Go) — linear layer `384 → 1024`, no bias, identity activation → `float32[batch, 1024]`
 
 **Model inputs (BERT-style):**
 - `input_ids`: `int64[batch_size, sequence_length]` — tokenized text
 - `attention_mask`: `int64[batch_size, sequence_length]` — 1 for real tokens, 0 for padding
 - `token_type_ids`: `int64[batch_size, sequence_length]` — all zeros (single-segment)
 
-**Model output:**
-- `last_hidden_state`: `float32[batch_size, sequence_length, 1024]` — per-token embeddings
-- Final embedding: mean pool over non-padding tokens → `float32[1024]`
+**Model output (from ONNX):**
+- `last_hidden_state`: `float32[batch_size, sequence_length, 384]` — per-token embeddings from base transformer
+
+**Final embedding (after Go post-processing):**
+- Mean pool over non-padding tokens → `float32[384]`
+- Project via Dense layer → `float32[1024]`
 
 **Query prefix:** mdbr-leaf-mt may use a `prompt_name="query"` prefix for asymmetric retrieval tasks. For our symmetric similarity use case (log line vs taxonomy description), both sides are "documents" — verify during implementation whether omitting the prefix or using a uniform prefix produces better classification results.
 
@@ -134,35 +145,48 @@ Replace the stubbed `ONNXEmbedder` with a working local embedder that converts t
 
 ## Section 3: Embed Implementation
 
-**What:** Wire tokenizer + ONNX inference + mean pooling into the `Embed()` and `EmbedBatch()` methods.
+**What:** Wire tokenizer + ONNX inference + mean pooling + dense projection into the `Embed()` and `EmbedBatch()` methods.
+
+The ONNX model outputs raw per-token hidden states (`[batch, seq, 384]`). To produce the final 1024-dim embedding, we must replicate the sentence-transformers post-processing pipeline in Go:
+1. Mean pool over non-padding tokens → `[batch, 384]`
+2. Dense projection (linear, no bias) → `[batch, 1024]`
 
 ### Tasks
 
 3.1 **Mean pooling**
-- Take raw model output `[batch_size, seq_len, 1024]` and attention mask
+- Take raw model output `[batch_size, seq_len, 384]` and attention mask
 - For each sequence: sum embeddings of non-padding tokens, divide by count of non-padding tokens
-- Return `[]float32` of length 1024 per input
+- Return `[]float32` of length 384 per input
 - File: `internal/engine/embedder/pooling.go`
 
-3.2 **`Embed(text string) ([]float32, error)`**
+3.2 **Dense projection layer**
+- Load `2_Dense/model.safetensors` — a `[1024, 384]` float32 weight matrix (no bias)
+- Parse the safetensors format (simple binary format: JSON header + raw tensor data)
+- Apply projection: `output = pooled @ W^T` (matrix multiply `[batch, 384] × [384, 1024]` → `[batch, 1024]`)
+- This is a one-time load at startup; the weight matrix stays in memory
+- File: `internal/engine/embedder/projection.go`
+
+3.3 **`Embed(text string) ([]float32, error)`**
 - Tokenize the text (Section 2)
 - Run ONNX inference (Section 1)
 - Mean pool the output (3.1)
+- Apply dense projection (3.2)
 - Return the 1024-dim vector
 
-3.3 **`EmbedBatch(texts []string) ([][]float32, error)`**
+3.4 **`EmbedBatch(texts []string) ([][]float32, error)`**
 - Batch-tokenize all texts with uniform padding
 - Single ONNX inference call for the whole batch
 - Mean pool each sequence independently
+- Apply dense projection to each pooled vector
 - Return slice of 1024-dim vectors
 - Consider a max batch size to bound memory usage (e.g., 64 texts per inference call, loop if more)
 
-3.4 **L2 normalization (optional but recommended)**
+3.5 **L2 normalization (optional but recommended)**
 - Normalize output vectors to unit length before returning
 - Makes cosine similarity equivalent to dot product — slightly faster downstream
 - The classifier's `cosineSimilarity` already handles unnormalized vectors, so this is an optimization, not a requirement
 
-3.5 **Embed tests**
+3.6 **Embed tests**
 - Smoke test: embed a string, verify output is `[]float32` of length 1024
 - Determinism: embed the same string twice, verify identical output
 - Batch consistency: `Embed(x)` should equal `EmbedBatch([]string{x})[0]`
@@ -171,6 +195,7 @@ Replace the stubbed `ONNXEmbedder` with a working local embedder that converts t
 
 ### Files touched
 - `internal/engine/embedder/pooling.go` — new file
+- `internal/engine/embedder/projection.go` — new file (safetensors parser + matmul)
 - `internal/engine/embedder/embedder.go` — update `Embed`, `EmbedBatch`
 - `internal/engine/embedder/embedder_test.go` — new file
 
@@ -210,8 +235,9 @@ Replace the stubbed `ONNXEmbedder` with a working local embedder that converts t
 ### Tasks
 
 5.1 **Download script**
-- Fetch `model.onnx` (+ `model.onnx_data` if external weights), `vocab.txt`, and `tokenizer_config.json` from HuggingFace (`MongoDB/mdbr-leaf-mt` or `onnx-community/mdbr-leaf-mt-ONNX`)
-- Place into `models/` directory
+- Fetch `model_quantized.onnx` (+ `model_quantized.onnx_data`), `vocab.txt`, and `tokenizer_config.json` from HuggingFace (`onnx-community/mdbr-leaf-mt-ONNX`)
+- Fetch `2_Dense/model.safetensors` (~1.57MB) and `2_Dense/config.json` from `MongoDB/mdbr-leaf-mt` — the projection layer weights (384 → 1024 linear, no bias)
+- Place into `models/` directory (projection files into `models/2_Dense/`)
 - Verify file integrity (check file size or sha256 if available)
 - Use `curl` or `wget` — no Python dependency
 
@@ -288,6 +314,7 @@ New files:
 - `internal/engine/embedder/tokenizer.go` — WordPiece tokenizer
 - `internal/engine/embedder/tokenizer_test.go` — tokenizer tests
 - `internal/engine/embedder/pooling.go` — mean pooling
+- `internal/engine/embedder/projection.go` — safetensors parser + dense projection (384 → 1024)
 - `internal/engine/embedder/embedder_test.go` — embed integration tests
 - `internal/engine/embedder/bench_test.go` — benchmarks
 

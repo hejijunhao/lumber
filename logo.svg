@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 330">
+  <!-- Shield -->
+  <polygon points="16,8 224,8 224,178 120,322 16,178" fill="#0a0a0a"/>
+  <!-- Rune mark -->
+  <g fill="#a31a1a">
+    <!-- Left ascending arm -->
+    <polygon points="107,128 34,26 56,18 120,106"/>
+    <!-- Right ascending arm -->
+    <polygon points="133,128 206,26 184,18 120,106"/>
+    <!-- Central shaft -->
+    <polygon points="107,106 133,106 133,278 120,305 107,278"/>
+    <!-- Crossbar -->
+    <rect x="68" y="188" width="104" height="18"/>
+  </g>
+</svg>

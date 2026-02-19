@@ -47,13 +47,19 @@ All tests pass. Total test time: ~125ms (including model loading).
 
 ## Key Discoveries
 
-### Embedding dimension is 384, not 1024
+### ONNX model outputs 384-dim hidden states, not 1024-dim final embeddings
 
-The quantized ONNX community export of `mdbr-leaf-mt` produces 384-dimensional embeddings (the model's native output from `last_hidden_state` has hidden_size=384). The 1024 figure from the plan refers to the full-precision model's final projection layer — the ONNX export from `onnx-community` doesn't include this projection.
+The ONNX export (both official `MongoDB/mdbr-leaf-mt` and community `onnx-community/mdbr-leaf-mt-ONNX`) only contains the base transformer, which has `hidden_size=384`. The full sentence-transformers pipeline is 3 stages:
 
-**Impact:** This is fine for our use case. 384 dimensions is more than sufficient for ~40 taxonomy labels. Cosine similarity and classification quality will not meaningfully differ. Memory usage is lower (40 × 384 × 4 = 61KB vs 160KB).
+1. **Transformer** (in ONNX) → `[batch, seq, 384]` per-token hidden states
+2. **Mean pooling** (not in ONNX) → `[batch, 384]`
+3. **Dense projection** (not in ONNX) → `[batch, 1024]` via a `[1024, 384]` linear layer (no bias, identity activation)
 
-The code dynamically discovers the dimension from the model — no hardcoded assumption.
+The projection weights live in `2_Dense/model.safetensors` (~1.57MB) in the official repo. This layer is where the LEAF distillation quality is expressed — it maps the 384-dim space into the 1024-dim space that achieves the 63.97 MTEB score.
+
+**Impact:** The plan's 1024-dim target is correct. We need to download the projection weights and apply the matmul in Go after mean pooling (Section 3). The ONNX `infer()` output feeds into pooling → projection → final 1024-dim vector.
+
+The code dynamically discovers the ONNX output dimension (384) from the model — no hardcoded assumption.
 
 ### `LD_LIBRARY_PATH` required at runtime
 
@@ -82,5 +88,5 @@ The warning `Unknown CPU vendor. cpuinfo_vendor value: 0` appears on aarch64 Lin
 ## Open Items for Next Sections
 
 - Section 2 (Tokenizer): Vocab is 30,522 tokens, standard BERT WordPiece. Special token IDs confirmed: `[PAD]=0, [UNK]=100, [CLS]=101, [SEP]=102`.
-- Section 3 (Embed): Mean pooling over `last_hidden_state` using attention mask, output dimension 384. The `infer()` method returns raw per-token embeddings ready for pooling.
-- Embedding dimension for taxonomy labels / classifier needs to be 384, not 1024.
+- Section 3 (Embed): Mean pooling over `last_hidden_state` using attention mask → 384-dim pooled vector → dense projection (384 → 1024) using `2_Dense/model.safetensors` weights → final 1024-dim embedding. The `infer()` method returns raw per-token embeddings ready for pooling.
+- Embedding dimension for taxonomy labels / classifier is 1024 (after projection).

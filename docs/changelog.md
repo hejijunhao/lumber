@@ -2,9 +2,37 @@
 
 ## Index
 
+- [0.2.2](#022--2026-02-19) — Download projection layer weights for full 1024-dim embeddings
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.2.2 — 2026-02-19
+
+**Embedding engine — projection layer download (plan Section 5 amendment)**
+
+### Added
+
+- `make download-model` now fetches the sentence-transformers `2_Dense` projection layer from the official `MongoDB/mdbr-leaf-mt` repo:
+  - `2_Dense/model.safetensors` (1.57MB) — `[1024, 384]` weight matrix
+  - `2_Dense/config.json` — confirms: `in_features: 384`, `out_features: 1024`, `bias: false`, identity activation
+- `OFFICIAL_BASE` URL variable in Makefile pointing to `MongoDB/mdbr-leaf-mt` (separate from `onnx-community` used for the ONNX model)
+- `.gitignore` — added `/models/2_Dense/`
+
+### Discovered
+
+- The ONNX export (both official and community repos) only contains the base transformer (stage 1 of 3). The full mdbr-leaf-mt sentence-transformers pipeline is:
+  1. **Transformer** (ONNX) → `[batch, seq, 384]` per-token hidden states
+  2. **Mean pooling** (not in ONNX) → `[batch, 384]`
+  3. **Dense projection** (not in ONNX) → `[batch, 1024]` via linear layer, no bias
+- The plan's 1024-dim target was correct all along — the projection must be applied in Go after mean pooling (Section 3)
+
+### Files changed
+
+- `Makefile` — added `OFFICIAL_BASE`, projection layer download block
+- `.gitignore` — added `2_Dense/` pattern
 
 ---
 
@@ -37,7 +65,7 @@
 
 ### Discovered
 
-- Quantized ONNX export produces **384-dim** embeddings (not 1024 as initially planned). The 1024 figure applies to the full-precision model's projection layer, which the `onnx-community` export omits. 384 dims is sufficient for ~40 taxonomy labels; the code discovers dimension dynamically.
+- ONNX export (both official and community) outputs **384-dim** per-token hidden states from the base transformer. The final **1024-dim** embeddings require post-processing in Go: mean pooling → dense projection via `2_Dense/model.safetensors` (`[1024, 384]` linear, no bias). The projection weights (~1.57MB) need to be downloaded separately from the official `MongoDB/mdbr-leaf-mt` repo. The ONNX output dimension (384) is discovered dynamically by the code.
 - ONNX Runtime `cpuid_info` warning on aarch64 (`Unknown CPU vendor`) is harmless — inference works correctly.
 
 ### Stubbed (not yet functional)
