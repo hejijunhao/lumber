@@ -30,6 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create embedder: %v", err)
 	}
+	defer emb.Close()
 
 	// Initialize taxonomy with default labels.
 	tax, err := taxonomy.New(taxonomy.DefaultRoots(), emb)

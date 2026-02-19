@@ -18,9 +18,10 @@ type ConnectorConfig struct {
 
 // EngineConfig holds classification engine settings.
 type EngineConfig struct {
-	ModelPath          string
+	ModelPath           string
+	VocabPath           string
 	ConfidenceThreshold float64
-	Verbosity          string // "minimal", "standard", "full"
+	Verbosity           string // "minimal", "standard", "full"
 }
 
 // OutputConfig holds output destination settings.
@@ -37,9 +38,10 @@ func Load() Config {
 			Endpoint: os.Getenv("LUMBER_ENDPOINT"),
 		},
 		Engine: EngineConfig{
-			ModelPath:          getenv("LUMBER_MODEL_PATH", "models/model.onnx"),
+			ModelPath:           getenv("LUMBER_MODEL_PATH", "models/model_quantized.onnx"),
+			VocabPath:           getenv("LUMBER_VOCAB_PATH", "models/vocab.txt"),
 			ConfidenceThreshold: 0.5,
-			Verbosity:          getenv("LUMBER_VERBOSITY", "standard"),
+			Verbosity:           getenv("LUMBER_VERBOSITY", "standard"),
 		},
 		Output: OutputConfig{
 			Format: getenv("LUMBER_OUTPUT", "stdout"),

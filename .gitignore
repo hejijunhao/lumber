@@ -4,7 +4,11 @@
 
 # Models (downloaded, not committed)
 /models/*.onnx
+/models/*.onnx_data
 /models/*.bin
+/models/vocab.txt
+/models/tokenizer_config.json
+/models/libonnxruntime.so
 
 # IDE
 .idea/
