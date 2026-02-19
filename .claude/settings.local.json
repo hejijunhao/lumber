@@ -11,7 +11,14 @@
       "Bash(ldconfig:*)",
       "Bash(go get:*)",
       "Bash(LD_LIBRARY_PATH=/home/pkhelfried/crimson_sun/lumber/models go test:*)",
-      "Bash(LD_LIBRARY_PATH=./models go test:*)"
+      "Bash(LD_LIBRARY_PATH=./models go test:*)",
+      "Bash(LD_LIBRARY_PATH=models go test:*)",
+      "Bash(python3:*)",
+      "Bash(pip install:*)",
+      "Bash(go test:*)",
+      "Bash(xxd:*)",
+      "Bash(LD_LIBRARY_PATH=models make test:*)",
+      "Bash(make test:*)"
     ]
   }
 }

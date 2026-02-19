@@ -1,5 +1,10 @@
 module github.com/crimson-sun/lumber
 
-go 1.23
+go 1.24.0
 
-require github.com/yalue/onnxruntime_go v1.26.0 // indirect
+toolchain go1.24.12
+
+require (
+	github.com/yalue/onnxruntime_go v1.26.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
+)

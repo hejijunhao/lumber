@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/crimson-sun/lumber/internal/config"
 	"github.com/crimson-sun/lumber/internal/connector"
@@ -26,17 +27,20 @@ func main() {
 	cfg := config.Load()
 
 	// Initialize embedder.
-	emb, err := embedder.New(cfg.Engine.ModelPath)
+	emb, err := embedder.New(cfg.Engine.ModelPath, cfg.Engine.VocabPath, cfg.Engine.ProjectionPath)
 	if err != nil {
 		log.Fatalf("failed to create embedder: %v", err)
 	}
 	defer emb.Close()
+	fmt.Fprintf(os.Stderr, "lumber: embedder loaded model=%s dim=%d\n", cfg.Engine.ModelPath, emb.EmbedDim())
 
 	// Initialize taxonomy with default labels.
+	t0 := time.Now()
 	tax, err := taxonomy.New(taxonomy.DefaultRoots(), emb)
 	if err != nil {
 		log.Fatalf("failed to create taxonomy: %v", err)
 	}
+	fmt.Fprintf(os.Stderr, "lumber: taxonomy pre-embedded %d labels in %s\n", len(tax.Labels()), time.Since(t0).Round(time.Millisecond))
 
 	// Initialize classifier and compactor.
 	cls := classifier.New(cfg.Engine.ConfidenceThreshold)

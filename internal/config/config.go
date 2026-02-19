@@ -20,6 +20,7 @@ type ConnectorConfig struct {
 type EngineConfig struct {
 	ModelPath           string
 	VocabPath           string
+	ProjectionPath      string
 	ConfidenceThreshold float64
 	Verbosity           string // "minimal", "standard", "full"
 }
@@ -40,6 +41,7 @@ func Load() Config {
 		Engine: EngineConfig{
 			ModelPath:           getenv("LUMBER_MODEL_PATH", "models/model_quantized.onnx"),
 			VocabPath:           getenv("LUMBER_VOCAB_PATH", "models/vocab.txt"),
+			ProjectionPath:      getenv("LUMBER_PROJECTION_PATH", "models/2_Dense/model.safetensors"),
 			ConfidenceThreshold: 0.5,
 			Verbosity:           getenv("LUMBER_VERBOSITY", "standard"),
 		},

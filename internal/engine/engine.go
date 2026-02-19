@@ -49,7 +49,7 @@ func (e *Engine) Process(raw model.RawLog) (model.CanonicalEvent, error) {
 	return model.CanonicalEvent{
 		Type:       eventType,
 		Category:   category,
-		Severity:   inferSeverity(eventType),
+		Severity:   result.Label.Severity,
 		Timestamp:  raw.Timestamp,
 		Summary:    summary,
 		Confidence: result.Confidence,
@@ -57,28 +57,44 @@ func (e *Engine) Process(raw model.RawLog) (model.CanonicalEvent, error) {
 	}, nil
 }
 
-// ProcessBatch classifies and compacts a slice of raw logs.
+// ProcessBatch classifies and compacts a slice of raw logs using a single
+// batched ONNX inference call.
 func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, error) {
-	events := make([]model.CanonicalEvent, 0, len(raws))
-	for _, raw := range raws {
-		ev, err := e.Process(raw)
-		if err != nil {
-			return nil, err
+	if len(raws) == 0 {
+		return nil, nil
+	}
+
+	texts := make([]string, len(raws))
+	for i, raw := range raws {
+		texts[i] = raw.Raw
+	}
+
+	vecs, err := e.embedder.EmbedBatch(texts)
+	if err != nil {
+		return nil, err
+	}
+
+	events := make([]model.CanonicalEvent, len(raws))
+	for i, raw := range raws {
+		result := e.classifier.Classify(vecs[i], e.taxonomy.Labels())
+		compacted, summary := e.compactor.Compact(raw.Raw)
+
+		parts := strings.SplitN(result.Label.Path, ".", 2)
+		eventType := parts[0]
+		category := ""
+		if len(parts) > 1 {
+			category = parts[1]
 		}
-		events = append(events, ev)
+
+		events[i] = model.CanonicalEvent{
+			Type:       eventType,
+			Category:   category,
+			Severity:   result.Label.Severity,
+			Timestamp:  raw.Timestamp,
+			Summary:    summary,
+			Confidence: result.Confidence,
+			Raw:        compacted,
+		}
 	}
 	return events, nil
-}
-
-func inferSeverity(eventType string) string {
-	switch eventType {
-	case "ERROR":
-		return "error"
-	case "SECURITY":
-		return "warning"
-	case "DEPLOY":
-		return "info"
-	default:
-		return "info"
-	}
 }

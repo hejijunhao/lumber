@@ -1,6 +1,33 @@
-# Lumber
+<p align="center">
+  <img src="logo.svg" alt="Lumber" width="120" />
+</p>
 
-A high-performance log normalization pipeline written in Go. Raw logs go in — from any provider, any format. Structured, canonical, token-efficient events come out.
+<h1 align="center">Lumber</h1>
+
+<p align="center">
+  <strong>High-performance log normalization pipeline written in Go.</strong><br/>
+  Raw logs go in — from any provider, any format.<br/>
+  Structured, canonical, token-efficient events come out.
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#taxonomy">Taxonomy</a> ·
+  <a href="docs/changelog.md">Changelog</a>
+</p>
+
+---
+
+## Why
+
+Every log provider has a different API, auth mechanism, and response format. Every application logs differently. Lumber normalizes all of it into a single schema using a local embedding model and semantic classification — no cloud API calls, no LLM dependency.
+
+This matters most for AI agent workflows that consume logs. Raw log dumps waste tokens, break on inconsistent formats, and require per-source integration code. Lumber solves that.
+
+---
+
+## How It Works
 
 ```
 Raw logs (Vercel, AWS, Fly.io, Datadog, …)
@@ -10,17 +37,9 @@ Embed → Classify → Canonicalize → Compact
 Structured canonical events (JSON)
 ```
 
-## Why
-
-Every log provider has a different API, auth mechanism, and response format. Every application logs differently. Lumber normalizes all of it into a single schema using a local embedding model and semantic classification — no cloud API calls, no LLM dependency.
-
-This matters most for AI agent workflows that consume logs. Raw log dumps waste tokens, break on inconsistent formats, and require per-source integration code. Lumber solves that.
-
-## How It Works
-
 1. **Connectors** ingest raw logs from providers (Vercel, AWS, etc.) via a unified interface
 2. **Embedder** converts each log line into a vector using a local ONNX model (~23MB, CPU-only)
-3. **Classifier** compares the vector against pre-embedded taxonomy labels using cosine similarity
+3. **Classifier** compares the vector against pre-embedded taxonomy labels via cosine similarity
 4. **Compactor** strips noise and truncates for token efficiency
 
 A raw log like this:
@@ -38,10 +57,11 @@ Becomes:
   "severity": "error",
   "timestamp": "2026-02-19T12:00:00Z",
   "summary": "UserService — connection refused (host=db-primary)",
-  "confidence": 0.91,
-  "raw": "ERROR [2026-02-19 12:00:00] UserService — connection refused (host=db-primary, port=5432)"
+  "confidence": 0.91
 }
 ```
+
+---
 
 ## Quickstart
 
@@ -74,7 +94,7 @@ export LUMBER_API_KEY=your-token-here
 ./bin/lumber
 ```
 
-Lumber reads configuration from environment variables:
+### Configuration
 
 | Variable | Default | Description |
 |---|---|---|
@@ -86,11 +106,15 @@ Lumber reads configuration from environment variables:
 | `LUMBER_VERBOSITY` | `standard` | Output verbosity: `minimal`, `standard`, `full` |
 | `LUMBER_OUTPUT` | `stdout` | Output destination |
 
-### Verbosity levels
+### Verbosity Levels
 
-- **minimal** — raw logs truncated to 200 characters
-- **standard** — raw logs truncated to 2000 characters
-- **full** — complete raw logs preserved
+| Level | Behavior |
+|---|---|
+| `minimal` | Raw logs truncated to 200 characters |
+| `standard` | Raw logs truncated to 2000 characters |
+| `full` | Complete raw logs preserved |
+
+---
 
 ## Taxonomy
 
@@ -108,6 +132,21 @@ Lumber ships with a curated taxonomy of ~40 leaf labels organized under 8 top-le
 | **APPLICATION** | info, warning, debug |
 
 Every log is classified into exactly one leaf label. The taxonomy is opinionated by design — a finite set of labels makes downstream consumption predictable.
+
+---
+
+## Embedding Model
+
+Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/onnx-community/mdbr-leaf-mt-ONNX), a 23M parameter text embedding model. Runs locally via ONNX Runtime — no external API calls, no GPU required.
+
+| Property | Value |
+|---|---|
+| Size | ~23MB (int8 quantized) |
+| Embedding dimension | 384 |
+| Tokenizer | WordPiece (30,522 tokens, lowercase) |
+| Runtime | ONNX Runtime via [onnxruntime-go](https://github.com/yalue/onnxruntime_go) |
+
+---
 
 ## Project Structure
 
@@ -127,6 +166,8 @@ internal/
 models/              ONNX model files (downloaded via make)
 ```
 
+---
+
 ## Development
 
 ```bash
@@ -137,18 +178,11 @@ make clean           # Remove build artifacts
 make download-model  # Fetch ONNX model + tokenizer from HuggingFace
 ```
 
-## Embedding Model
-
-Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/onnx-community/mdbr-leaf-mt-ONNX), a 23M parameter text embedding model. It runs locally via ONNX Runtime — no external API calls, no GPU required.
-
-- **Size:** ~23MB (int8 quantized)
-- **Embedding dimension:** 384
-- **Tokenizer:** WordPiece (30,522 tokens, lowercase)
-- **Runtime:** ONNX Runtime via [onnxruntime-go](https://github.com/yalue/onnxruntime_go)
+---
 
 ## Status
 
-Lumber is under active development. Current state:
+Lumber is under active development.
 
 - [x] Project scaffolding and pipeline skeleton
 - [x] Model download pipeline
@@ -161,6 +195,8 @@ Lumber is under active development. Current state:
 
 See [docs/changelog.md](docs/changelog.md) for detailed release notes.
 
-## License
+---
 
-[Apache 2.0](LICENSE)
+<p align="center">
+  <a href="LICENSE">Apache 2.0</a>
+</p>

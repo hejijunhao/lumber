@@ -9,35 +9,91 @@ type Embedder interface {
 	Close() error
 }
 
-// ONNXEmbedder wraps the ONNX runtime for local embedding inference.
+// ONNXEmbedder wraps the ONNX runtime, tokenizer, and projection layer for
+// local embedding inference.
 type ONNXEmbedder struct {
 	session *onnxSession
+	tok     *tokenizer
+	proj    *projection
 }
 
-// New creates an ONNXEmbedder by loading the ONNX model at modelPath.
-// The ONNX Runtime shared library is expected at models/libonnxruntime.so
-// (same directory as the model file).
-func New(modelPath string) (*ONNXEmbedder, error) {
+// New creates an ONNXEmbedder by loading the ONNX model, vocabulary, and
+// projection weights. The full embedding pipeline is:
+// tokenize → ONNX inference → mean pool → dense projection → 1024-dim vector.
+func New(modelPath, vocabPath, projectionPath string) (*ONNXEmbedder, error) {
 	sess, err := newONNXSession(modelPath)
 	if err != nil {
 		return nil, fmt.Errorf("embedder: %w", err)
 	}
-	return &ONNXEmbedder{session: sess}, nil
+
+	tok, err := newTokenizer(vocabPath)
+	if err != nil {
+		sess.close()
+		return nil, fmt.Errorf("embedder: %w", err)
+	}
+
+	proj, err := loadProjection(projectionPath)
+	if err != nil {
+		sess.close()
+		return nil, fmt.Errorf("embedder: %w", err)
+	}
+
+	if int(sess.embedDim) != proj.inDim {
+		sess.close()
+		return nil, fmt.Errorf("embedder: ONNX output dim %d != projection input dim %d",
+			sess.embedDim, proj.inDim)
+	}
+
+	return &ONNXEmbedder{session: sess, tok: tok, proj: proj}, nil
 }
 
-// EmbedDim returns the embedding dimensionality of the loaded model.
+// EmbedDim returns the final embedding dimensionality (after projection).
 func (e *ONNXEmbedder) EmbedDim() int {
-	return int(e.session.embedDim)
+	return e.proj.outDim
 }
 
+// Embed produces a single embedding vector for the given text.
+// Routes through tokenizeBatch for dynamic padding to actual sequence length.
 func (e *ONNXEmbedder) Embed(text string) ([]float32, error) {
-	// Stub — requires tokenizer (Section 2) and pooling (Section 3).
-	return nil, fmt.Errorf("embedder: Embed not yet wired (needs tokenizer)")
+	batch := e.tok.tokenizeBatch([]string{text})
+
+	hidden, err := e.session.infer(
+		batch.inputIDs, batch.attentionMask, batch.tokenTypeIDs,
+		batch.batchSize, batch.seqLen,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("embedder: %w", err)
+	}
+
+	pooled := meanPool(hidden, batch.attentionMask, 1, batch.seqLen, e.session.embedDim)
+	return e.proj.apply(pooled), nil
 }
 
+// EmbedBatch produces embedding vectors for multiple texts.
 func (e *ONNXEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
-	// Stub — requires tokenizer (Section 2) and pooling (Section 3).
-	return nil, fmt.Errorf("embedder: EmbedBatch not yet wired (needs tokenizer)")
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	batch := e.tok.tokenizeBatch(texts)
+
+	hidden, err := e.session.infer(
+		batch.inputIDs, batch.attentionMask, batch.tokenTypeIDs,
+		batch.batchSize, batch.seqLen,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("embedder: %w", err)
+	}
+
+	pooled := meanPool(hidden, batch.attentionMask, batch.batchSize, batch.seqLen, e.session.embedDim)
+
+	dim := e.session.embedDim
+	results := make([][]float32, batch.batchSize)
+	for i := int64(0); i < batch.batchSize; i++ {
+		vec := pooled[i*dim : (i+1)*dim]
+		results[i] = e.proj.apply(vec)
+	}
+	return results, nil
 }
 
 // Close releases ONNX Runtime resources.
