@@ -20,7 +20,13 @@
       "Bash(LD_LIBRARY_PATH=models make test:*)",
       "Bash(make test:*)",
       "Bash(go run:*)",
-      "Bash(LD_LIBRARY_PATH=models go vet:*)"
+      "Bash(LD_LIBRARY_PATH=models go vet:*)",
+      "WebFetch(domain:community.vercel.com)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:fly.io)",
+      "WebFetch(domain:community.fly.io)",
+      "WebFetch(domain:api.supabase.com)",
+      "Bash(find:*)"
     ]
   }
 }

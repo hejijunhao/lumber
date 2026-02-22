@@ -17,6 +17,7 @@ type ConnectorConfig struct {
 	Provider string
 	APIKey   string
 	Endpoint string
+	Extra    map[string]string
 }
 
 // EngineConfig holds classification engine settings.
@@ -40,6 +41,7 @@ func Load() Config {
 			Provider: getenv("LUMBER_CONNECTOR", "vercel"),
 			APIKey:   os.Getenv("LUMBER_API_KEY"),
 			Endpoint: os.Getenv("LUMBER_ENDPOINT"),
+			Extra:    loadConnectorExtra(),
 		},
 		Engine: EngineConfig{
 			ModelPath:           getenv("LUMBER_MODEL_PATH", "models/model_quantized.onnx"),
@@ -59,6 +61,32 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// loadConnectorExtra reads provider-specific env vars into an Extra map.
+func loadConnectorExtra() map[string]string {
+	vars := []struct {
+		envVar   string
+		extraKey string
+	}{
+		{"LUMBER_VERCEL_PROJECT_ID", "project_id"},
+		{"LUMBER_VERCEL_TEAM_ID", "team_id"},
+		{"LUMBER_FLY_APP_NAME", "app_name"},
+		{"LUMBER_SUPABASE_PROJECT_REF", "project_ref"},
+		{"LUMBER_SUPABASE_TABLES", "tables"},
+		{"LUMBER_POLL_INTERVAL", "poll_interval"},
+	}
+
+	var m map[string]string
+	for _, v := range vars {
+		if val := os.Getenv(v.envVar); val != "" {
+			if m == nil {
+				m = make(map[string]string)
+			}
+			m[v.extraKey] = val
+		}
+	}
+	return m
 }
 
 func getenvFloat(key string, fallback float64) float64 {

@@ -20,6 +20,8 @@ import (
 	"github.com/crimson-sun/lumber/internal/pipeline"
 
 	// Register connector implementations.
+	_ "github.com/crimson-sun/lumber/internal/connector/flyio"
+	_ "github.com/crimson-sun/lumber/internal/connector/supabase"
 	_ "github.com/crimson-sun/lumber/internal/connector/vercel"
 )
 
@@ -80,6 +82,7 @@ func main() {
 		Provider: cfg.Connector.Provider,
 		APIKey:   cfg.Connector.APIKey,
 		Endpoint: cfg.Connector.Endpoint,
+		Extra:    cfg.Connector.Extra,
 	}
 
 	fmt.Fprintf(os.Stderr, "lumber: starting with connector=%s\n", cfg.Connector.Provider)

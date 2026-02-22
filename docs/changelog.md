@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.4.0](#040--2026-02-23) — Log connectors: shared HTTP client, Vercel/Fly.io/Supabase connectors, config wiring
 - [0.3.0](#030--2026-02-22) — Classification pipeline: 42-leaf taxonomy, 104-entry test corpus, 100% accuracy, edge case hardening
 - [0.2.6](#026--2026-02-19) — Post-review fixes: batched inference, leaf severity, dynamic padding, math.Sqrt
 - [0.2.5](#025--2026-02-19) — Taxonomy pre-embedding: batch embed all 34 leaf labels at startup
@@ -11,6 +12,87 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.4.0 — 2026-02-23
+
+**Log connectors — real-world ingestion from three providers (Phase 3)**
+
+Phase 3 connects the classification pipeline to production log sources. Three connectors (Vercel, Fly.io, Supabase) implement the existing `connector.Connector` interface, producing `model.RawLog` entries that feed directly into the engine. A shared HTTP client handles auth, retry, and rate limit logic for all three.
+
+### Added
+
+- **Shared HTTP client** — `internal/connector/httpclient` package:
+  - `Client` with Bearer auth, base URL, configurable timeout (default 30s)
+  - `GetJSON(ctx, path, query, dest)` — authenticated GET with JSON unmarshalling
+  - Retry logic: 429 respects `Retry-After` header, 5xx uses exponential backoff (1s, 2s, 4s), max 3 retries
+  - `*APIError` type for non-2xx responses (status code + first 512 bytes of body)
+  - Context-aware retry sleep via `time.NewTimer` + `select` on `ctx.Done()`
+  - Zero external dependencies — stdlib only
+- **Vercel connector** — `internal/connector/vercel`, registered as `"vercel"`:
+  - Response types matching Vercel REST API (`/v1/projects/{projectId}/logs`)
+  - `toRawLog`: unix millisecond timestamps, metadata includes level/source/id, optional proxy fields (status_code, path, method, host)
+  - `Query()`: cursor-paginated via `pagination.next`, time filters via `from`/`to` (unix ms), team scoping via `teamId`, limit enforcement
+  - `Stream()`: poll-based with immediate first poll, configurable interval (default 5s), errors logged to stderr without crashing
+- **Fly.io connector** — `internal/connector/flyio`, registered as `"flyio"`:
+  - Response types matching Fly.io HTTP logs API (`/api/v1/apps/{app_name}/logs`) with nested `data[].attributes` structure
+  - `toRawLog`: RFC 3339 timestamp parsing, `attributes.meta` merged into top-level metadata
+  - `Query()`: cursor-paginated via `next_token`, **client-side time filter** with half-open interval `[Start, End)` (Fly.io has no server-side time range)
+  - `Stream()`: same poll-loop pattern as Vercel
+- **Supabase connector** — `internal/connector/supabase`, registered as `"supabase"`:
+  - SQL builder with allow-list validation against all 7 Supabase log tables (4 default + 3 opt-in) — prevents SQL injection
+  - `toRawLog`: microsecond timestamp conversion (float64 → `time.Unix`), `event_message` excluded from metadata to avoid duplication with `Raw`
+  - `Query()`: multi-table SQL queries, 24-hour window chunking for ranges exceeding API limit, results merged and sorted by timestamp, configurable table list via comma-separated `tables` config
+  - `Stream()`: timestamp-cursor polling (default 10s — 4 tables × 1 req/table = 24 req/min, within 120 req/min limit), per-table error isolation
+- **Config wiring** — `loadConnectorExtra()` reads provider-specific env vars into `ConnectorConfig.Extra`:
+  - `LUMBER_VERCEL_PROJECT_ID` → `project_id`, `LUMBER_VERCEL_TEAM_ID` → `team_id`
+  - `LUMBER_FLY_APP_NAME` → `app_name`
+  - `LUMBER_SUPABASE_PROJECT_REF` → `project_ref`, `LUMBER_SUPABASE_TABLES` → `tables`
+  - `LUMBER_POLL_INTERVAL` → `poll_interval` (shared across all connectors)
+  - Returns `nil` when no provider-specific vars are set
+- **Test suites** — 38 tests across 5 packages, all using `httptest` fixtures (no live API keys required):
+  - httpclient: 8 tests (auth, query params, retries, rate limits, context cancellation)
+  - vercel: 8 tests (mapping, pagination, missing config, API errors, streaming)
+  - flyio: 7 tests (mapping, pagination, client-side time filter, streaming)
+  - supabase: 11 tests (SQL builder, injection prevention, multi-table, window chunking, default/custom tables, streaming)
+  - config: 4 tests (defaults, extra population, empty omission, multi-provider)
+
+### Changed
+
+- `internal/config/config.go` — added `Extra map[string]string` to `ConnectorConfig`, added `loadConnectorExtra()` helper
+- `cmd/lumber/main.go` — blank imports for `flyio` and `supabase` connectors, `Extra` passed through to pipeline config
+
+### Design decisions
+
+- **Single `GetJSON` method on HTTP client.** All three provider APIs use GET requests. POST/PUT can be added later.
+- **Consistent poll-loop pattern across all connectors.** Immediate first poll, ticker-based loop, buffered channel (64), errors logged not fatal. Reduces cognitive load when reading or extending connectors.
+- **Client-side time filter for Fly.io.** The API has no server-side time range, so filtering happens after fetch. Half-open `[Start, End)` prevents overlap when querying consecutive windows.
+- **Allow-list for Supabase SQL table names.** Table names are interpolated into SQL. The allow-list is the defense against injection — only the 7 known Supabase log tables are accepted.
+- **Per-table error isolation in Supabase streaming.** One failing table (e.g., opt-in table not enabled) doesn't block the others.
+- **Flat shared Extra map.** Key names are unique across providers. Simpler than per-provider maps, and `poll_interval` is intentionally shared.
+
+### Known limitations
+
+- No buffering or backpressure — channels are fixed at 64, no overflow handling (Phase 5)
+- No graceful drain on shutdown — context cancellation closes channels, in-flight logs may be lost (Phase 5)
+- No per-log error isolation — malformed API responses surface as errors, not skip-and-continue (Phase 5)
+- Connector selection and config via env vars only — no CLI flags (Phase 5)
+- All tests use `httptest` fixtures — live API validation deferred (Phase 6)
+
+### Files changed
+
+- `internal/connector/httpclient/httpclient.go` — **new**, shared HTTP client
+- `internal/connector/httpclient/httpclient_test.go` — **new**, 8 tests
+- `internal/connector/vercel/vercel.go` — replaced stub with full implementation
+- `internal/connector/vercel/vercel_test.go` — **new**, 8 tests
+- `internal/connector/flyio/flyio.go` — **new**, Fly.io connector
+- `internal/connector/flyio/flyio_test.go` — **new**, 7 tests
+- `internal/connector/supabase/supabase.go` — **new**, Supabase connector
+- `internal/connector/supabase/supabase_test.go` — **new**, 11 tests
+- `internal/config/config.go` — added `Extra` field and `loadConnectorExtra()`
+- `internal/config/config_test.go` — **new**, 4 tests
+- `cmd/lumber/main.go` — added connector imports, pass Extra
 
 ---
 
