@@ -18,7 +18,9 @@
       "Bash(go test:*)",
       "Bash(xxd:*)",
       "Bash(LD_LIBRARY_PATH=models make test:*)",
-      "Bash(make test:*)"
+      "Bash(make test:*)",
+      "Bash(go run:*)",
+      "Bash(LD_LIBRARY_PATH=models go vet:*)"
     ]
   }
 }

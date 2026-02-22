@@ -36,7 +36,7 @@ func (m *mockEmbedder) Close() error { return nil }
 // failEmbedder always returns an error.
 type failEmbedder struct{}
 
-func (f *failEmbedder) Embed(string) ([]float32, error)        { return nil, fmt.Errorf("embed failed") }
+func (f *failEmbedder) Embed(string) ([]float32, error)          { return nil, fmt.Errorf("embed failed") }
 func (f *failEmbedder) EmbedBatch([]string) ([][]float32, error) { return nil, fmt.Errorf("embed failed") }
 func (f *failEmbedder) Close() error                             { return nil }
 
@@ -54,7 +54,7 @@ func TestNewPreEmbeds(t *testing.T) {
 			Name: "SYSTEM",
 			Desc: "System events",
 			Children: []*model.TaxonomyNode{
-				{Name: "startup", Desc: "Service startup", Severity: "info"},
+				{Name: "process_lifecycle", Desc: "Service start stop restart", Severity: "info"},
 			},
 		},
 	}
@@ -71,7 +71,7 @@ func TestNewPreEmbeds(t *testing.T) {
 	}
 
 	// Verify paths.
-	wantPaths := []string{"ERROR.timeout", "ERROR.connection_failure", "SYSTEM.startup"}
+	wantPaths := []string{"ERROR.timeout", "ERROR.connection_failure", "SYSTEM.process_lifecycle"}
 	for i, want := range wantPaths {
 		if labels[i].Path != want {
 			t.Errorf("label[%d].Path = %q, want %q", i, labels[i].Path, want)
@@ -133,5 +133,82 @@ func TestNewEmbedError(t *testing.T) {
 	_, err := New(roots, &failEmbedder{})
 	if err == nil {
 		t.Fatal("expected error from failing embedder")
+	}
+}
+
+func TestDefaultRootsLeafCount(t *testing.T) {
+	roots := DefaultRoots()
+
+	// Count roots.
+	if len(roots) != 8 {
+		t.Errorf("expected 8 roots, got %d", len(roots))
+	}
+
+	// Count total leaves.
+	total := 0
+	for _, root := range roots {
+		total += len(root.Children)
+	}
+	if total != 42 {
+		t.Errorf("expected 42 leaves, got %d", total)
+	}
+
+	// Verify per-root leaf counts.
+	wantCounts := map[string]int{
+		"ERROR":       9,
+		"REQUEST":     5,
+		"DEPLOY":      7,
+		"SYSTEM":      5,
+		"ACCESS":      5,
+		"PERFORMANCE": 5,
+		"DATA":        3,
+		"SCHEDULED":   3,
+	}
+	for _, root := range roots {
+		want, ok := wantCounts[root.Name]
+		if !ok {
+			t.Errorf("unexpected root %q", root.Name)
+			continue
+		}
+		if len(root.Children) != want {
+			t.Errorf("root %q: expected %d leaves, got %d", root.Name, want, len(root.Children))
+		}
+	}
+}
+
+func TestDefaultRootsSeverity(t *testing.T) {
+	roots := DefaultRoots()
+
+	for _, root := range roots {
+		for _, leaf := range root.Children {
+			if leaf.Severity == "" {
+				t.Errorf("%s.%s has empty severity", root.Name, leaf.Name)
+			}
+			switch leaf.Severity {
+			case "error", "warning", "info", "debug":
+				// valid
+			default:
+				t.Errorf("%s.%s has invalid severity %q", root.Name, leaf.Name, leaf.Severity)
+			}
+		}
+	}
+}
+
+func TestDefaultRootsDescriptions(t *testing.T) {
+	roots := DefaultRoots()
+
+	for _, root := range roots {
+		if root.Desc == "" {
+			t.Errorf("root %q has empty description", root.Name)
+		}
+		for _, leaf := range root.Children {
+			if leaf.Desc == "" {
+				t.Errorf("%s.%s has empty description", root.Name, leaf.Name)
+			}
+			// Descriptions should be substantial enough for good embeddings.
+			if len(leaf.Desc) < 20 {
+				t.Errorf("%s.%s description too short (%d chars): %q", root.Name, leaf.Name, len(leaf.Desc), leaf.Desc)
+			}
+		}
 	}
 }

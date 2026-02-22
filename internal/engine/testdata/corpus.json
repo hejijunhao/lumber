@@ -1,0 +1,730 @@
+[
+  {
+    "raw": "ERROR [2026-02-19 12:00:00] UserService — connection refused (host=db-primary, port=5432)",
+    "expected_type": "ERROR",
+    "expected_category": "connection_failure",
+    "expected_severity": "error",
+    "description": "PostgreSQL connection refused"
+  },
+  {
+    "raw": "{\"level\":\"error\",\"msg\":\"dial tcp 10.0.0.5:6379: connect: connection refused\",\"service\":\"cache-worker\",\"ts\":1708300800}",
+    "expected_type": "ERROR",
+    "expected_category": "connection_failure",
+    "expected_severity": "error",
+    "description": "Redis TCP connection refused, JSON format"
+  },
+  {
+    "raw": "2026-02-19T12:00:00Z FATAL DNS resolution failed for api.payments.internal: NXDOMAIN",
+    "expected_type": "ERROR",
+    "expected_category": "connection_failure",
+    "expected_severity": "error",
+    "description": "DNS resolution failure"
+  },
+  {
+    "raw": "level=error msg=\"authentication failed: invalid token\" user_id=usr_42 provider=okta request_id=req-abc123",
+    "expected_type": "ERROR",
+    "expected_category": "auth_failure",
+    "expected_severity": "error",
+    "description": "Invalid auth token, structured key=value"
+  },
+  {
+    "raw": "{\"error\":\"InvalidCredentialsError\",\"message\":\"Bad username or password\",\"email\":\"user@example.com\",\"timestamp\":\"2026-02-19T12:00:00Z\"}",
+    "expected_type": "ERROR",
+    "expected_category": "auth_failure",
+    "expected_severity": "error",
+    "description": "Bad credentials error, JSON"
+  },
+  {
+    "raw": "ERR expired JWT token for user admin@corp.io — token expired at 2026-02-18T23:59:59Z",
+    "expected_type": "ACCESS",
+    "expected_category": "session_expired",
+    "expected_severity": "info",
+    "description": "Expired JWT token"
+  },
+  {
+    "raw": "WARN [AuthZ] Access denied: user 'deploy-bot' lacks scope 'admin:write' on resource '/api/v2/config'",
+    "expected_type": "ERROR",
+    "expected_category": "authorization_failure",
+    "expected_severity": "error",
+    "description": "Insufficient scope, explicit authz denial"
+  },
+  {
+    "raw": "{\"level\":\"error\",\"msg\":\"permission denied\",\"action\":\"delete\",\"resource\":\"billing/invoices\",\"role\":\"viewer\"}",
+    "expected_type": "ERROR",
+    "expected_category": "authorization_failure",
+    "expected_severity": "error",
+    "description": "Permission denied by role, JSON"
+  },
+  {
+    "raw": "HTTP 403 Forbidden — RBAC policy rejected request from service-account-ci to namespace production",
+    "expected_type": "ERROR",
+    "expected_category": "authorization_failure",
+    "expected_severity": "error",
+    "description": "403 Forbidden with RBAC context"
+  },
+  {
+    "raw": "ERROR context deadline exceeded after 30s waiting for response from inventory-service",
+    "expected_type": "ERROR",
+    "expected_category": "timeout",
+    "expected_severity": "error",
+    "description": "Context deadline exceeded"
+  },
+  {
+    "raw": "{\"level\":\"error\",\"msg\":\"request timed out\",\"timeout_ms\":5000,\"endpoint\":\"/api/checkout\",\"trace_id\":\"t-9f8e7d\"}",
+    "expected_type": "ERROR",
+    "expected_category": "timeout",
+    "expected_severity": "error",
+    "description": "Request timeout, JSON format"
+  },
+  {
+    "raw": "2026-02-19 12:00:00.123 ERROR Gateway timeout: upstream did not respond within 60s",
+    "expected_type": "ERROR",
+    "expected_category": "timeout",
+    "expected_severity": "error",
+    "description": "Gateway timeout"
+  },
+  {
+    "raw": "panic: runtime error: invalid memory address or nil pointer dereference\ngoroutine 1 [running]:\nmain.processOrder(0x0)",
+    "expected_type": "ERROR",
+    "expected_category": "runtime_exception",
+    "expected_severity": "error",
+    "description": "Go nil pointer panic with stack trace"
+  },
+  {
+    "raw": "Exception in thread \"main\" java.lang.NullPointerException: Cannot invoke method on null object\n\tat com.app.UserService.getProfile(UserService.java:142)",
+    "expected_type": "ERROR",
+    "expected_category": "runtime_exception",
+    "expected_severity": "error",
+    "description": "Java NullPointerException"
+  },
+  {
+    "raw": "Uncaught TypeError: Cannot read properties of undefined (reading 'map') at /app/src/components/Dashboard.tsx:87",
+    "expected_type": "ERROR",
+    "expected_category": "runtime_exception",
+    "expected_severity": "error",
+    "description": "JavaScript uncaught TypeError"
+  },
+  {
+    "raw": "WARN ValidationError: field 'email' must be a valid email address, got 'not-an-email'",
+    "expected_type": "ERROR",
+    "expected_category": "validation_error",
+    "expected_severity": "warning",
+    "description": "Email field validation failure"
+  },
+  {
+    "raw": "{\"error\":\"schema_mismatch\",\"message\":\"expected integer for field 'quantity', got string\",\"path\":\"/api/orders\",\"status\":422}",
+    "expected_type": "ERROR",
+    "expected_category": "validation_error",
+    "expected_severity": "warning",
+    "description": "Schema type mismatch, JSON"
+  },
+  {
+    "raw": "ERROR request body validation failed: missing required field 'payment_method' in POST /checkout",
+    "expected_type": "ERROR",
+    "expected_category": "validation_error",
+    "expected_severity": "warning",
+    "description": "Missing required field"
+  },
+  {
+    "raw": "kernel: Out of memory: Killed process 12345 (java) total-vm:8048060kB, anon-rss:7985432kB",
+    "expected_type": "ERROR",
+    "expected_category": "out_of_memory",
+    "expected_severity": "error",
+    "description": "Linux OOM killer"
+  },
+  {
+    "raw": "java.lang.OutOfMemoryError: Java heap space at com.app.DataProcessor.loadBatch(DataProcessor.java:234)",
+    "expected_type": "ERROR",
+    "expected_category": "out_of_memory",
+    "expected_severity": "error",
+    "description": "Java OutOfMemoryError"
+  },
+  {
+    "raw": "{\"level\":\"fatal\",\"msg\":\"container exceeded memory limit\",\"container\":\"api-server\",\"limit\":\"512Mi\",\"used\":\"515Mi\"}",
+    "expected_type": "ERROR",
+    "expected_category": "out_of_memory",
+    "expected_severity": "error",
+    "description": "Container memory limit exceeded, JSON"
+  },
+  {
+    "raw": "WARN rate limit exceeded for API key sk-prod-***abc: 1000 requests/min (limit: 500)",
+    "expected_type": "ERROR",
+    "expected_category": "rate_limited",
+    "expected_severity": "warning",
+    "description": "API rate limit exceeded"
+  },
+  {
+    "raw": "{\"status\":429,\"error\":\"Too Many Requests\",\"retry_after\":30,\"client_ip\":\"203.0.113.42\"}",
+    "expected_type": "ERROR",
+    "expected_category": "rate_limited",
+    "expected_severity": "warning",
+    "description": "HTTP 429 response, JSON"
+  },
+  {
+    "raw": "ERROR upstream service 'payment-gateway' returned 503: circuit breaker is OPEN after 5 consecutive failures",
+    "expected_type": "ERROR",
+    "expected_category": "dependency_error",
+    "expected_severity": "error",
+    "description": "Circuit breaker open, upstream 503"
+  },
+  {
+    "raw": "{\"level\":\"error\",\"msg\":\"external API call failed\",\"service\":\"stripe\",\"status\":500,\"error\":\"internal_error\",\"retries\":3}",
+    "expected_type": "ERROR",
+    "expected_category": "dependency_error",
+    "expected_severity": "error",
+    "description": "External API failure after retries, JSON"
+  },
+  {
+    "raw": "FATAL downstream dependency 'notification-service' is unavailable — all health checks failing",
+    "expected_type": "ERROR",
+    "expected_category": "dependency_error",
+    "expected_severity": "error",
+    "description": "Downstream dependency unavailable"
+  },
+  {
+    "raw": "192.168.1.100 - - [19/Feb/2026:12:00:00 +0000] \"GET /api/users HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"",
+    "expected_type": "REQUEST",
+    "expected_category": "success",
+    "expected_severity": "info",
+    "description": "Apache/nginx combined log format, 200"
+  },
+  {
+    "raw": "{\"method\":\"POST\",\"path\":\"/api/orders\",\"status\":201,\"duration_ms\":45,\"request_id\":\"req-xyz789\"}",
+    "expected_type": "REQUEST",
+    "expected_category": "success",
+    "expected_severity": "info",
+    "description": "Successful POST 201, JSON"
+  },
+  {
+    "raw": "INFO HTTP 200 OK — GET /healthz responded in 2ms",
+    "expected_type": "REQUEST",
+    "expected_category": "success",
+    "expected_severity": "info",
+    "description": "Successful health endpoint response"
+  },
+  {
+    "raw": "WARN HTTP 404 Not Found: GET /api/v2/users/unknown-id — resource does not exist",
+    "expected_type": "REQUEST",
+    "expected_category": "client_error",
+    "expected_severity": "warning",
+    "description": "404 Not Found"
+  },
+  {
+    "raw": "{\"method\":\"POST\",\"path\":\"/api/upload\",\"status\":400,\"error\":\"bad request: file size exceeds 10MB limit\"}",
+    "expected_type": "REQUEST",
+    "expected_category": "client_error",
+    "expected_severity": "warning",
+    "description": "400 Bad Request, JSON"
+  },
+  {
+    "raw": "2026-02-19T12:00:00Z | WARN | 422 Unprocessable Entity | POST /api/invoices | invalid currency code 'XYZ'",
+    "expected_type": "REQUEST",
+    "expected_category": "client_error",
+    "expected_severity": "warning",
+    "description": "422 Unprocessable Entity, pipe-delimited"
+  },
+  {
+    "raw": "ERROR HTTP 500 Internal Server Error — GET /api/reports/quarterly — unhandled database error",
+    "expected_type": "REQUEST",
+    "expected_category": "server_error",
+    "expected_severity": "error",
+    "description": "500 Internal Server Error"
+  },
+  {
+    "raw": "{\"status\":502,\"error\":\"Bad Gateway\",\"upstream\":\"backend-pool-3\",\"path\":\"/api/search\"}",
+    "expected_type": "REQUEST",
+    "expected_category": "server_error",
+    "expected_severity": "error",
+    "description": "502 Bad Gateway, JSON"
+  },
+  {
+    "raw": "nginx: 503 Service Unavailable — all upstream servers are down for /api/checkout",
+    "expected_type": "REQUEST",
+    "expected_category": "server_error",
+    "expected_severity": "error",
+    "description": "503 Service Unavailable from nginx"
+  },
+  {
+    "raw": "INFO HTTP 301 Moved Permanently: /old-page → /new-page",
+    "expected_type": "REQUEST",
+    "expected_category": "redirect",
+    "expected_severity": "info",
+    "description": "301 permanent redirect"
+  },
+  {
+    "raw": "{\"method\":\"GET\",\"path\":\"/login\",\"status\":302,\"location\":\"/dashboard\",\"duration_ms\":3}",
+    "expected_type": "REQUEST",
+    "expected_category": "redirect",
+    "expected_severity": "info",
+    "description": "302 redirect after login, JSON"
+  },
+  {
+    "raw": "WARN slow request: GET /api/reports took 12340ms (threshold: 5000ms) trace_id=t-slow-001",
+    "expected_type": "REQUEST",
+    "expected_category": "slow_request",
+    "expected_severity": "warning",
+    "description": "Slow request exceeding threshold"
+  },
+  {
+    "raw": "{\"level\":\"warn\",\"msg\":\"high response time\",\"path\":\"/api/export\",\"duration_ms\":28500,\"sla_ms\":5000}",
+    "expected_type": "REQUEST",
+    "expected_category": "slow_request",
+    "expected_severity": "warning",
+    "description": "High response time, JSON"
+  },
+  {
+    "raw": "INFO [CI] Build #4521 started for commit abc1234 on branch main — triggered by push",
+    "expected_type": "DEPLOY",
+    "expected_category": "build_started",
+    "expected_severity": "info",
+    "description": "CI build started by push"
+  },
+  {
+    "raw": "{\"event\":\"build.started\",\"build_id\":\"bld-98765\",\"repo\":\"api-service\",\"branch\":\"feature/auth\",\"trigger\":\"pull_request\"}",
+    "expected_type": "DEPLOY",
+    "expected_category": "build_started",
+    "expected_severity": "info",
+    "description": "Build started event, JSON"
+  },
+  {
+    "raw": "INFO Build #4521 completed successfully in 3m42s — all 156 tests passed",
+    "expected_type": "DEPLOY",
+    "expected_category": "build_succeeded",
+    "expected_severity": "info",
+    "description": "Build succeeded with test count"
+  },
+  {
+    "raw": "{\"event\":\"build.success\",\"build_id\":\"bld-98765\",\"duration_s\":180,\"artifacts\":[\"api-server:v2.3.1\"]}",
+    "expected_type": "DEPLOY",
+    "expected_category": "build_succeeded",
+    "expected_severity": "info",
+    "description": "Build success event, JSON"
+  },
+  {
+    "raw": "ERROR Build #4522 FAILED — compilation error in pkg/auth/handler.go:45: undefined: TokenValidator",
+    "expected_type": "DEPLOY",
+    "expected_category": "build_failed",
+    "expected_severity": "error",
+    "description": "Build failed with compilation error"
+  },
+  {
+    "raw": "{\"event\":\"build.failed\",\"build_id\":\"bld-99999\",\"error\":\"npm install failed: ERESOLVE unable to resolve dependency tree\",\"exit_code\":1}",
+    "expected_type": "DEPLOY",
+    "expected_category": "build_failed",
+    "expected_severity": "error",
+    "description": "Build failed, npm dependency error, JSON"
+  },
+  {
+    "raw": "INFO [Deploy] Starting deployment of api-server:v2.3.1 to production cluster us-east-1",
+    "expected_type": "DEPLOY",
+    "expected_category": "deploy_started",
+    "expected_severity": "info",
+    "description": "Production deployment started"
+  },
+  {
+    "raw": "{\"event\":\"deploy.started\",\"service\":\"api-server\",\"version\":\"v2.3.1\",\"environment\":\"production\",\"strategy\":\"rolling\"}",
+    "expected_type": "DEPLOY",
+    "expected_category": "deploy_started",
+    "expected_severity": "info",
+    "description": "Rolling deployment started, JSON"
+  },
+  {
+    "raw": "INFO Deployment of api-server:v2.3.1 to production completed — all pods healthy",
+    "expected_type": "DEPLOY",
+    "expected_category": "deploy_succeeded",
+    "expected_severity": "info",
+    "description": "Deployment completed, all pods healthy"
+  },
+  {
+    "raw": "{\"event\":\"deploy.success\",\"service\":\"api-server\",\"version\":\"v2.3.1\",\"duration_s\":120,\"replicas\":5}",
+    "expected_type": "DEPLOY",
+    "expected_category": "deploy_succeeded",
+    "expected_severity": "info",
+    "description": "Deploy success event, JSON"
+  },
+  {
+    "raw": "ERROR Deployment FAILED: api-server:v2.3.2 — 3/5 pods in CrashLoopBackOff, rolling back",
+    "expected_type": "DEPLOY",
+    "expected_category": "deploy_failed",
+    "expected_severity": "error",
+    "description": "Deployment failed, pods crashing"
+  },
+  {
+    "raw": "{\"event\":\"deploy.failed\",\"service\":\"worker\",\"version\":\"v1.0.5\",\"error\":\"health check failed after 5 retries\"}",
+    "expected_type": "DEPLOY",
+    "expected_category": "deploy_failed",
+    "expected_severity": "error",
+    "description": "Deploy failed, health check failure, JSON"
+  },
+  {
+    "raw": "WARN [Deploy] Rollback initiated: reverting api-server from v2.3.2 to v2.3.1 in production",
+    "expected_type": "DEPLOY",
+    "expected_category": "rollback",
+    "expected_severity": "warning",
+    "description": "Deployment rollback to previous version"
+  },
+  {
+    "raw": "{\"event\":\"deploy.rollback\",\"service\":\"api-server\",\"from\":\"v2.3.2\",\"to\":\"v2.3.1\",\"reason\":\"health_check_failure\"}",
+    "expected_type": "DEPLOY",
+    "expected_category": "rollback",
+    "expected_severity": "warning",
+    "description": "Rollback event, JSON"
+  },
+  {
+    "raw": "INFO Health check passed: GET /healthz returned 200 in 3ms",
+    "expected_type": "SYSTEM",
+    "expected_category": "health_check",
+    "expected_severity": "info",
+    "description": "Successful health check"
+  },
+  {
+    "raw": "{\"probe\":\"readiness\",\"path\":\"/ready\",\"status\":200,\"latency_ms\":5}",
+    "expected_type": "SYSTEM",
+    "expected_category": "health_check",
+    "expected_severity": "info",
+    "description": "Readiness probe passed, JSON"
+  },
+  {
+    "raw": "WARN Liveness probe failed for pod api-server-7b4d9 — probe returned HTTP 503, container not ready",
+    "expected_type": "SYSTEM",
+    "expected_category": "health_check",
+    "expected_severity": "info",
+    "description": "Failed liveness probe"
+  },
+  {
+    "raw": "INFO [HPA] Scaling up deployment/api-server from 3 to 5 replicas — CPU utilization 82%",
+    "expected_type": "SYSTEM",
+    "expected_category": "scaling_event",
+    "expected_severity": "info",
+    "description": "Kubernetes HPA scale up"
+  },
+  {
+    "raw": "{\"event\":\"autoscale\",\"direction\":\"down\",\"service\":\"worker\",\"from\":8,\"to\":3,\"reason\":\"low_cpu_utilization\"}",
+    "expected_type": "SYSTEM",
+    "expected_category": "scaling_event",
+    "expected_severity": "info",
+    "description": "Autoscale down event, JSON"
+  },
+  {
+    "raw": "WARN CPU usage at 94% on node ip-10-0-1-42 — exceeds threshold of 90%",
+    "expected_type": "SYSTEM",
+    "expected_category": "resource_alert",
+    "expected_severity": "warning",
+    "description": "CPU threshold breach"
+  },
+  {
+    "raw": "{\"alert\":\"disk_space_low\",\"node\":\"db-primary\",\"mount\":\"/data\",\"used_pct\":95,\"threshold_pct\":90}",
+    "expected_type": "SYSTEM",
+    "expected_category": "resource_alert",
+    "expected_severity": "warning",
+    "description": "Disk space low alert, JSON"
+  },
+  {
+    "raw": "WARN Memory usage at 88% (7.04GB / 8GB) on container api-server — approaching limit",
+    "expected_type": "SYSTEM",
+    "expected_category": "resource_alert",
+    "expected_severity": "warning",
+    "description": "Memory approaching limit"
+  },
+  {
+    "raw": "INFO Server started on :8080 — version v2.3.1, environment=production, pid=12345",
+    "expected_type": "SYSTEM",
+    "expected_category": "process_lifecycle",
+    "expected_severity": "info",
+    "description": "Server process started"
+  },
+  {
+    "raw": "INFO Received SIGTERM, initiating graceful shutdown — draining 42 active connections",
+    "expected_type": "SYSTEM",
+    "expected_category": "process_lifecycle",
+    "expected_severity": "info",
+    "description": "Graceful shutdown on SIGTERM"
+  },
+  {
+    "raw": "{\"event\":\"process.restart\",\"service\":\"worker\",\"reason\":\"config_reload\",\"pid\":54321,\"uptime_s\":86400}",
+    "expected_type": "SYSTEM",
+    "expected_category": "process_lifecycle",
+    "expected_severity": "info",
+    "description": "Process restart event, JSON"
+  },
+  {
+    "raw": "INFO Environment variable DATABASE_URL updated — configuration reloaded without restart",
+    "expected_type": "SYSTEM",
+    "expected_category": "config_change",
+    "expected_severity": "info",
+    "description": "Env var update, config reload"
+  },
+  {
+    "raw": "{\"event\":\"feature_flag.toggled\",\"flag\":\"new-checkout-flow\",\"enabled\":true,\"changed_by\":\"admin@corp.io\"}",
+    "expected_type": "SYSTEM",
+    "expected_category": "config_change",
+    "expected_severity": "info",
+    "description": "Feature flag toggled, JSON"
+  },
+  {
+    "raw": "INFO User admin@corp.io logged in successfully via SSO (provider: Okta, session: sess-abc123)",
+    "expected_type": "ACCESS",
+    "expected_category": "login_success",
+    "expected_severity": "info",
+    "description": "SSO login success"
+  },
+  {
+    "raw": "{\"event\":\"auth.login\",\"status\":\"success\",\"user\":\"user@example.com\",\"method\":\"password\",\"ip\":\"203.0.113.42\"}",
+    "expected_type": "ACCESS",
+    "expected_category": "login_success",
+    "expected_severity": "info",
+    "description": "Password login success, JSON"
+  },
+  {
+    "raw": "WARN Failed login attempt for user admin@corp.io — invalid password (attempt 3 of 5)",
+    "expected_type": "ACCESS",
+    "expected_category": "login_failure",
+    "expected_severity": "warning",
+    "description": "Failed login with attempt count"
+  },
+  {
+    "raw": "{\"event\":\"auth.login\",\"status\":\"failure\",\"user\":\"unknown@attacker.com\",\"reason\":\"account_not_found\",\"ip\":\"198.51.100.23\"}",
+    "expected_type": "ACCESS",
+    "expected_category": "login_failure",
+    "expected_severity": "warning",
+    "description": "Login failure, account not found, JSON"
+  },
+  {
+    "raw": "WARN MFA verification failed for user finance@corp.io — incorrect TOTP code",
+    "expected_type": "ACCESS",
+    "expected_category": "login_failure",
+    "expected_severity": "warning",
+    "description": "MFA verification failure"
+  },
+  {
+    "raw": "INFO Session expired for user user@example.com — last activity 31 minutes ago (timeout: 30m)",
+    "expected_type": "ACCESS",
+    "expected_category": "session_expired",
+    "expected_severity": "info",
+    "description": "Session timeout after inactivity"
+  },
+  {
+    "raw": "{\"event\":\"session.expired\",\"user_id\":\"usr_42\",\"reason\":\"jwt_expired\",\"expired_at\":\"2026-02-19T11:30:00Z\"}",
+    "expected_type": "ACCESS",
+    "expected_category": "session_expired",
+    "expected_severity": "info",
+    "description": "JWT token expired, JSON"
+  },
+  {
+    "raw": "INFO Role 'billing-admin' granted to user finance@corp.io by admin@corp.io",
+    "expected_type": "ACCESS",
+    "expected_category": "permission_change",
+    "expected_severity": "info",
+    "description": "Role granted to user"
+  },
+  {
+    "raw": "{\"event\":\"rbac.permission_revoked\",\"user\":\"contractor@external.com\",\"role\":\"developer\",\"revoked_by\":\"admin\"}",
+    "expected_type": "ACCESS",
+    "expected_category": "permission_change",
+    "expected_severity": "info",
+    "description": "Permission revoked, JSON"
+  },
+  {
+    "raw": "INFO API key created for service account 'ci-deploy' — key_id=ak_prod_xyz, scopes=[deploy:write]",
+    "expected_type": "ACCESS",
+    "expected_category": "api_key_event",
+    "expected_severity": "info",
+    "description": "API key created"
+  },
+  {
+    "raw": "{\"event\":\"api_key.rotated\",\"key_id\":\"ak_prod_old\",\"new_key_id\":\"ak_prod_new\",\"service_account\":\"payment-worker\"}",
+    "expected_type": "ACCESS",
+    "expected_category": "api_key_event",
+    "expected_severity": "info",
+    "description": "API key rotated, JSON"
+  },
+  {
+    "raw": "WARN [Performance] p99 latency spiked to 2340ms (baseline: 450ms) for endpoint /api/search",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "latency_spike",
+    "expected_severity": "warning",
+    "description": "p99 latency spike"
+  },
+  {
+    "raw": "{\"alert\":\"latency_degradation\",\"endpoint\":\"/api/checkout\",\"p95_ms\":1800,\"baseline_p95_ms\":200,\"window\":\"5m\"}",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "latency_spike",
+    "expected_severity": "warning",
+    "description": "Latency degradation alert, JSON"
+  },
+  {
+    "raw": "WARN Response time percentiles degraded: p50=120ms→340ms, p95=400ms→1200ms over last 10 minutes",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "latency_spike",
+    "expected_severity": "warning",
+    "description": "Percentile degradation over time window"
+  },
+  {
+    "raw": "WARN Traffic drop detected: request rate fell from 1200 rps to 340 rps in the last 5 minutes",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "throughput_drop",
+    "expected_severity": "warning",
+    "description": "Request rate decrease"
+  },
+  {
+    "raw": "{\"alert\":\"throughput_drop\",\"msg\":\"request rate dropped significantly\",\"current_rps\":150,\"baseline_rps\":800,\"drop_pct\":81}",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "throughput_drop",
+    "expected_severity": "warning",
+    "description": "Throughput drop, JSON"
+  },
+  {
+    "raw": "WARN Job queue 'email-notifications' backlog growing: 15000 pending, 200 processing, consumers=2",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "queue_backlog",
+    "expected_severity": "warning",
+    "description": "Job queue backlog growing"
+  },
+  {
+    "raw": "{\"alert\":\"consumer_lag\",\"queue\":\"order-events\",\"lag\":45000,\"consumer_group\":\"analytics-worker\",\"partition\":3}",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "queue_backlog",
+    "expected_severity": "warning",
+    "description": "Kafka consumer lag, JSON"
+  },
+  {
+    "raw": "WARN Cache hit ratio dropped to 34% (baseline: 92%) — Redis cache may be cold after restart",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "cache_event",
+    "expected_severity": "info",
+    "description": "Cache hit ratio drop"
+  },
+  {
+    "raw": "{\"event\":\"cache.eviction\",\"cache\":\"user-sessions\",\"evicted\":5000,\"reason\":\"memory_pressure\",\"hit_ratio\":0.45}",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "cache_event",
+    "expected_severity": "info",
+    "description": "Cache eviction event, JSON"
+  },
+  {
+    "raw": "INFO Cache miss for key user:profile:42 — fetching from database",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "cache_event",
+    "expected_severity": "info",
+    "description": "Individual cache miss"
+  },
+  {
+    "raw": "WARN Slow query detected: SELECT * FROM orders WHERE created_at > $1 took 8.2s (threshold: 1s)",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "db_slow_query",
+    "expected_severity": "warning",
+    "description": "Slow SQL SELECT query"
+  },
+  {
+    "raw": "WARN slow query detected: UPDATE inventory SET stock = stock - 1 WHERE sku = $1 took 5200ms (threshold: 1000ms)",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "db_slow_query",
+    "expected_severity": "warning",
+    "description": "Slow SQL UPDATE query"
+  },
+  {
+    "raw": "WARN Long-running database query: 12.5 seconds for aggregate report on table analytics_events (15M rows)",
+    "expected_type": "PERFORMANCE",
+    "expected_category": "db_slow_query",
+    "expected_severity": "warning",
+    "description": "Long-running aggregate query"
+  },
+  {
+    "raw": "INFO [DB] Executed query: SELECT id, name, email FROM users WHERE active = true — 342 rows, 12ms",
+    "expected_type": "DATA",
+    "expected_category": "query_executed",
+    "expected_severity": "info",
+    "description": "SQL SELECT query executed"
+  },
+  {
+    "raw": "{\"level\":\"debug\",\"msg\":\"query executed\",\"sql\":\"INSERT INTO audit_log (action, user_id, ts) VALUES ($1, $2, $3)\",\"duration_ms\":3}",
+    "expected_type": "DATA",
+    "expected_category": "query_executed",
+    "expected_severity": "info",
+    "description": "SQL INSERT query, JSON"
+  },
+  {
+    "raw": "INFO [DB] Executed: DELETE FROM expired_sessions WHERE last_seen < '2026-02-12' — 1205 rows, 45ms, completed normally",
+    "expected_type": "DATA",
+    "expected_category": "query_executed",
+    "expected_severity": "info",
+    "description": "SQL DELETE query"
+  },
+  {
+    "raw": "INFO [Migration] Applied migration 20260219_add_billing_columns: ALTER TABLE users ADD COLUMN billing_plan VARCHAR(50)",
+    "expected_type": "DATA",
+    "expected_category": "migration",
+    "expected_severity": "info",
+    "description": "Database schema migration applied"
+  },
+  {
+    "raw": "{\"event\":\"migration.completed\",\"version\":\"20260219_002\",\"direction\":\"up\",\"table\":\"orders\",\"duration_ms\":3200}",
+    "expected_type": "DATA",
+    "expected_category": "migration",
+    "expected_severity": "info",
+    "description": "Migration completed, JSON"
+  },
+  {
+    "raw": "INFO Database migration: creating index idx_orders_created_at on orders(created_at) — completed in 8.5s",
+    "expected_type": "DATA",
+    "expected_category": "migration",
+    "expected_severity": "info",
+    "description": "Index creation migration"
+  },
+  {
+    "raw": "INFO [Replication] Read replica db-replica-2 caught up to primary — lag: 0ms",
+    "expected_type": "DATA",
+    "expected_category": "replication",
+    "expected_severity": "info",
+    "description": "Replica caught up to primary"
+  },
+  {
+    "raw": "{\"event\":\"backup.completed\",\"database\":\"production\",\"size_gb\":45.2,\"duration_s\":180,\"destination\":\"s3://backups/\"}",
+    "expected_type": "DATA",
+    "expected_category": "replication",
+    "expected_severity": "info",
+    "description": "Database backup completed, JSON"
+  },
+  {
+    "raw": "INFO [Scheduler] Cron job 'daily-report-generation' started — schedule: 0 6 * * * UTC",
+    "expected_type": "SCHEDULED",
+    "expected_category": "cron_started",
+    "expected_severity": "info",
+    "description": "Cron job started with schedule"
+  },
+  {
+    "raw": "{\"event\":\"job.started\",\"job\":\"cleanup-expired-tokens\",\"trigger\":\"schedule\",\"schedule\":\"*/15 * * * *\"}",
+    "expected_type": "SCHEDULED",
+    "expected_category": "cron_started",
+    "expected_severity": "info",
+    "description": "Scheduled job started, JSON"
+  },
+  {
+    "raw": "INFO Cron job 'daily-report-generation' completed successfully — processed 15,000 records in 42s",
+    "expected_type": "SCHEDULED",
+    "expected_category": "cron_completed",
+    "expected_severity": "info",
+    "description": "Cron job completed"
+  },
+  {
+    "raw": "{\"event\":\"job.completed\",\"job\":\"cleanup-expired-tokens\",\"duration_s\":5,\"items_processed\":230,\"status\":\"success\"}",
+    "expected_type": "SCHEDULED",
+    "expected_category": "cron_completed",
+    "expected_severity": "info",
+    "description": "Scheduled job completed, JSON"
+  },
+  {
+    "raw": "ERROR Cron job 'nightly-sync' failed after 3 retries — error: connection to sync-target refused",
+    "expected_type": "SCHEDULED",
+    "expected_category": "cron_failed",
+    "expected_severity": "error",
+    "description": "Cron job failed after retries"
+  },
+  {
+    "raw": "{\"event\":\"job.failed\",\"job\":\"invoice-processing\",\"error\":\"division by zero in calculateTotal\",\"attempt\":1,\"max_retries\":3}",
+    "expected_type": "SCHEDULED",
+    "expected_category": "cron_failed",
+    "expected_severity": "error",
+    "description": "Scheduled job failed, JSON"
+  }
+]

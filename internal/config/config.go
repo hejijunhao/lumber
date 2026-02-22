@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -42,7 +45,7 @@ func Load() Config {
 			ModelPath:           getenv("LUMBER_MODEL_PATH", "models/model_quantized.onnx"),
 			VocabPath:           getenv("LUMBER_VOCAB_PATH", "models/vocab.txt"),
 			ProjectionPath:      getenv("LUMBER_PROJECTION_PATH", "models/2_Dense/model.safetensors"),
-			ConfidenceThreshold: 0.5,
+			ConfidenceThreshold: getenvFloat("LUMBER_CONFIDENCE_THRESHOLD", 0.5),
 			Verbosity:           getenv("LUMBER_VERBOSITY", "standard"),
 		},
 		Output: OutputConfig{
@@ -56,4 +59,16 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getenvFloat(key string, fallback float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
 }
