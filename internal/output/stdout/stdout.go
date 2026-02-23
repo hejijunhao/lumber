@@ -6,21 +6,30 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/crimson-sun/lumber/internal/engine/compactor"
 	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/crimson-sun/lumber/internal/output"
 )
 
 // Output writes JSON-encoded canonical events to stdout.
 type Output struct {
-	enc *json.Encoder
+	enc       *json.Encoder
+	verbosity compactor.Verbosity
 }
 
-// New creates a new stdout Output.
-func New() *Output {
-	return &Output{enc: json.NewEncoder(os.Stdout)}
+// New creates a new stdout Output with verbosity-aware field omission
+// and optional pretty-printed JSON.
+func New(verbosity compactor.Verbosity, pretty bool) *Output {
+	enc := json.NewEncoder(os.Stdout)
+	if pretty {
+		enc.SetIndent("", "  ")
+	}
+	return &Output{enc: enc, verbosity: verbosity}
 }
 
 func (o *Output) Write(_ context.Context, event model.CanonicalEvent) error {
-	if err := o.enc.Encode(event); err != nil {
+	formatted := output.FormatEvent(event, o.verbosity)
+	if err := o.enc.Encode(formatted); err != nil {
 		return fmt.Errorf("stdout output: %w", err)
 	}
 	return nil

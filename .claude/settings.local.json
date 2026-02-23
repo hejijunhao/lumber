@@ -26,7 +26,12 @@
       "WebFetch(domain:fly.io)",
       "WebFetch(domain:community.fly.io)",
       "WebFetch(domain:api.supabase.com)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(source:*)",
+      "Bash(mdfind:*)",
+      "Bash(env:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(echo:*)"
     ]
   }
 }

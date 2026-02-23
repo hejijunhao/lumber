@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // Config holds all Lumber configuration.
@@ -26,12 +28,14 @@ type EngineConfig struct {
 	VocabPath           string
 	ProjectionPath      string
 	ConfidenceThreshold float64
-	Verbosity           string // "minimal", "standard", "full"
+	Verbosity           string        // "minimal", "standard", "full"
+	DedupWindow         time.Duration // event dedup window; 0 disables
 }
 
 // OutputConfig holds output destination settings.
 type OutputConfig struct {
 	Format string // "stdout" for now
+	Pretty bool   // pretty-print JSON output
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -49,9 +53,11 @@ func Load() Config {
 			ProjectionPath:      getenv("LUMBER_PROJECTION_PATH", "models/2_Dense/model.safetensors"),
 			ConfidenceThreshold: getenvFloat("LUMBER_CONFIDENCE_THRESHOLD", 0.5),
 			Verbosity:           getenv("LUMBER_VERBOSITY", "standard"),
+			DedupWindow:         getenvDuration("LUMBER_DEDUP_WINDOW", 5*time.Second),
 		},
 		Output: OutputConfig{
 			Format: getenv("LUMBER_OUTPUT", "stdout"),
+			Pretty: getenvBool("LUMBER_OUTPUT_PRETTY", false),
 		},
 	}
 }
@@ -87,6 +93,29 @@ func loadConnectorExtra() map[string]string {
 		}
 	}
 	return m
+}
+
+func getenvBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return strings.EqualFold(v, "true") || v == "1"
+}
+
+func getenvDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	if v == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 func getenvFloat(key string, fallback float64) float64 {

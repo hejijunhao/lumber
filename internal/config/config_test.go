@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -12,6 +13,7 @@ func TestLoad_Defaults(t *testing.T) {
 		"LUMBER_VERCEL_PROJECT_ID", "LUMBER_VERCEL_TEAM_ID",
 		"LUMBER_FLY_APP_NAME", "LUMBER_SUPABASE_PROJECT_REF",
 		"LUMBER_SUPABASE_TABLES", "LUMBER_POLL_INTERVAL",
+		"LUMBER_OUTPUT_PRETTY", "LUMBER_DEDUP_WINDOW",
 	} {
 		os.Unsetenv(key)
 	}
@@ -26,6 +28,12 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.Connector.Extra != nil {
 		t.Fatalf("expected nil Extra when no provider vars set, got %v", cfg.Connector.Extra)
+	}
+	if cfg.Output.Pretty {
+		t.Fatal("expected default Pretty=false")
+	}
+	if cfg.Engine.DedupWindow != 5*time.Second {
+		t.Fatalf("expected default DedupWindow=5s, got %v", cfg.Engine.DedupWindow)
 	}
 }
 
@@ -111,5 +119,51 @@ func TestLoad_MultipleProviders(t *testing.T) {
 		if got := cfg.Connector.Extra[k]; got != want {
 			t.Fatalf("Extra[%q]: expected %q, got %q", k, want, got)
 		}
+	}
+}
+
+func TestLoad_PrettyDefault(t *testing.T) {
+	os.Unsetenv("LUMBER_OUTPUT_PRETTY")
+	cfg := Load()
+	if cfg.Output.Pretty {
+		t.Fatal("expected default Pretty=false")
+	}
+}
+
+func TestLoad_PrettyEnv(t *testing.T) {
+	os.Setenv("LUMBER_OUTPUT_PRETTY", "true")
+	defer os.Unsetenv("LUMBER_OUTPUT_PRETTY")
+
+	cfg := Load()
+	if !cfg.Output.Pretty {
+		t.Fatal("expected Pretty=true when LUMBER_OUTPUT_PRETTY=true")
+	}
+}
+
+func TestLoad_DedupWindowDefault(t *testing.T) {
+	os.Unsetenv("LUMBER_DEDUP_WINDOW")
+	cfg := Load()
+	if cfg.Engine.DedupWindow != 5*time.Second {
+		t.Fatalf("expected default DedupWindow=5s, got %v", cfg.Engine.DedupWindow)
+	}
+}
+
+func TestLoad_DedupWindowEnv(t *testing.T) {
+	os.Setenv("LUMBER_DEDUP_WINDOW", "10s")
+	defer os.Unsetenv("LUMBER_DEDUP_WINDOW")
+
+	cfg := Load()
+	if cfg.Engine.DedupWindow != 10*time.Second {
+		t.Fatalf("expected DedupWindow=10s, got %v", cfg.Engine.DedupWindow)
+	}
+}
+
+func TestLoad_DedupWindowDisabled(t *testing.T) {
+	os.Setenv("LUMBER_DEDUP_WINDOW", "0")
+	defer os.Unsetenv("LUMBER_DEDUP_WINDOW")
+
+	cfg := Load()
+	if cfg.Engine.DedupWindow != 0 {
+		t.Fatalf("expected DedupWindow=0 (disabled), got %v", cfg.Engine.DedupWindow)
 	}
 }

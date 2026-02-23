@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.4.1](#041--2026-02-23) — Post-review fixes: stack trace truncation, Go interleaving, test correctness
 - [0.4.0](#040--2026-02-23) — Log connectors: shared HTTP client, Vercel/Fly.io/Supabase connectors, config wiring
 - [0.3.0](#030--2026-02-22) — Classification pipeline: 42-leaf taxonomy, 104-entry test corpus, 100% accuracy, edge case hardening
 - [0.2.6](#026--2026-02-19) — Post-review fixes: batched inference, leaf severity, dynamic padding, math.Sqrt
@@ -12,6 +13,25 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.4.1 — 2026-02-23
+
+**Phase 4 post-review fixes — stack trace truncation, Go interleaving, test correctness**
+
+### Fixed
+
+- **Stack trace truncation destroyed by character truncation** — `Compact` applied 200/2000-rune character truncation unconditionally after stack trace frame truncation. A 30-frame Java trace truncated to 5+2 frames is still ~660 chars, so the 200-rune limit clipped the "frames omitted" message. Fix: when stack trace truncation is effective (returns a different string), skip character truncation — they serve the same purpose.
+- **Go stack dump produced duplicate omission messages** — `truncateStackTrace` used a line-by-line keep-set that retained all non-frame lines and inserted an omission message at each omitted frame. Go frames are two-line pairs (function signature + `\t/path/file.go:line`); non-frame lines between omitted frames reset the `omissionInserted` flag, producing up to 4 duplicate omission messages and *increasing* token count. Fix: replaced keep-set with range-based cut — everything between the last kept first-frame and the first kept last-frame is replaced wholesale with a single omission message.
+- **`TestFormatEventCount` false failure** — test reused a `map[string]any` across two `json.Unmarshal` calls without clearing. Go's `Unmarshal` merges into existing maps, so the `count` key from the first call (count=5) persisted into the second (count=0, expected omitted).
+- **`stdout` tests captured empty output** — `stdout.New()` eagerly stored `os.Stdout` into `json.NewEncoder` at construction time. Tests created the `Output` before `captureStdout()` redirected `os.Stdout` to a pipe, so the encoder wrote to the original fd. Fix: moved `New()` inside the capture callback.
+
+### Files changed
+
+- `internal/engine/compactor/compactor.go` — range-based `truncateStackTrace`, conditional character truncation in `Compact`
+- `internal/output/format_test.go` — reset map before second unmarshal
+- `internal/output/stdout/stdout_test.go` — moved `New()` inside `captureStdout` callback (3 tests)
 
 ---
 

@@ -14,6 +14,7 @@ import (
 	"github.com/crimson-sun/lumber/internal/engine"
 	"github.com/crimson-sun/lumber/internal/engine/classifier"
 	"github.com/crimson-sun/lumber/internal/engine/compactor"
+	"github.com/crimson-sun/lumber/internal/engine/dedup"
 	"github.com/crimson-sun/lumber/internal/engine/embedder"
 	"github.com/crimson-sun/lumber/internal/engine/taxonomy"
 	"github.com/crimson-sun/lumber/internal/output/stdout"
@@ -52,7 +53,7 @@ func main() {
 	eng := engine.New(emb, tax, cls, cmp)
 
 	// Initialize output.
-	out := stdout.New()
+	out := stdout.New(parseVerbosity(cfg.Engine.Verbosity), cfg.Output.Pretty)
 
 	// Resolve connector.
 	ctor, err := connector.Get(cfg.Connector.Provider)
@@ -61,8 +62,14 @@ func main() {
 	}
 	conn := ctor()
 
-	// Build pipeline.
-	p := pipeline.New(conn, eng, out)
+	// Build pipeline with optional dedup.
+	var pipeOpts []pipeline.Option
+	if cfg.Engine.DedupWindow > 0 {
+		d := dedup.New(dedup.Config{Window: cfg.Engine.DedupWindow})
+		pipeOpts = append(pipeOpts, pipeline.WithDedup(d, cfg.Engine.DedupWindow))
+		fmt.Fprintf(os.Stderr, "lumber: dedup enabled window=%s\n", cfg.Engine.DedupWindow)
+	}
+	p := pipeline.New(conn, eng, out, pipeOpts...)
 	defer p.Close()
 
 	// Set up graceful shutdown.

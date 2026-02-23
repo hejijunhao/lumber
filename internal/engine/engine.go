@@ -37,14 +37,14 @@ func (e *Engine) Process(raw model.RawLog) (model.CanonicalEvent, error) {
 
 	result := e.classifier.Classify(vec, e.taxonomy.Labels())
 
-	compacted, summary := e.compactor.Compact(raw.Raw)
-
 	parts := strings.SplitN(result.Label.Path, ".", 2)
 	eventType := parts[0]
 	category := ""
 	if len(parts) > 1 {
 		category = parts[1]
 	}
+
+	compacted, summary := e.compactor.Compact(raw.Raw, eventType)
 
 	return model.CanonicalEvent{
 		Type:       eventType,
@@ -77,7 +77,6 @@ func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, erro
 	events := make([]model.CanonicalEvent, len(raws))
 	for i, raw := range raws {
 		result := e.classifier.Classify(vecs[i], e.taxonomy.Labels())
-		compacted, summary := e.compactor.Compact(raw.Raw)
 
 		parts := strings.SplitN(result.Label.Path, ".", 2)
 		eventType := parts[0]
@@ -85,6 +84,8 @@ func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, erro
 		if len(parts) > 1 {
 			category = parts[1]
 		}
+
+		compacted, summary := e.compactor.Compact(raw.Raw, eventType)
 
 		events[i] = model.CanonicalEvent{
 			Type:       eventType,
