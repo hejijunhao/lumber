@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,5 +167,232 @@ func TestLoad_DedupWindowDisabled(t *testing.T) {
 	cfg := Load()
 	if cfg.Engine.DedupWindow != 0 {
 		t.Fatalf("expected DedupWindow=0 (disabled), got %v", cfg.Engine.DedupWindow)
+	}
+}
+
+// --- Validation tests ---
+
+// validConfig returns a Config with real temp files so file-existence checks pass.
+func validConfig(t *testing.T) Config {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"model.onnx", "vocab.txt", "proj.safetensors"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Config{
+		Mode:      "stream",
+		Connector: ConnectorConfig{Provider: "vercel", APIKey: "tok_123"},
+		Engine: EngineConfig{
+			ModelPath:           filepath.Join(dir, "model.onnx"),
+			VocabPath:           filepath.Join(dir, "vocab.txt"),
+			ProjectionPath:      filepath.Join(dir, "proj.safetensors"),
+			ConfidenceThreshold: 0.5,
+			Verbosity:           "standard",
+			DedupWindow:         5 * time.Second,
+		},
+		Output: OutputConfig{Format: "stdout"},
+	}
+}
+
+func TestValidate_ValidConfig(t *testing.T) {
+	cfg := validConfig(t)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected nil error for valid config, got: %v", err)
+	}
+}
+
+func TestValidate_BadConfidenceThreshold(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Engine.ConfidenceThreshold = 1.5
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for confidence threshold 1.5")
+	}
+	if !strings.Contains(err.Error(), "confidence") {
+		t.Fatalf("expected error to mention 'confidence', got: %v", err)
+	}
+}
+
+func TestValidate_BadVerbosity(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Engine.Verbosity = "verbose"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid verbosity")
+	}
+	if !strings.Contains(err.Error(), "verbosity") {
+		t.Fatalf("expected error to mention 'verbosity', got: %v", err)
+	}
+}
+
+func TestValidate_NegativeDedupWindow(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Engine.DedupWindow = -1 * time.Second
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for negative dedup window")
+	}
+	if !strings.Contains(err.Error(), "dedup") {
+		t.Fatalf("expected error to mention 'dedup', got: %v", err)
+	}
+}
+
+func TestValidate_MissingModelFile(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Engine.ModelPath = "/nonexistent/model.onnx"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing model file")
+	}
+	if !strings.Contains(err.Error(), "model") {
+		t.Fatalf("expected error to mention 'model', got: %v", err)
+	}
+}
+
+func TestValidate_MissingAPIKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.APIKey = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing API key with provider set")
+	}
+	if !strings.Contains(err.Error(), "LUMBER_API_KEY") {
+		t.Fatalf("expected error to mention 'LUMBER_API_KEY', got: %v", err)
+	}
+}
+
+func TestValidate_MultipleErrors(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.APIKey = ""
+	cfg.Engine.ConfidenceThreshold = -0.1
+	cfg.Engine.Verbosity = "loud"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for multiple bad fields")
+	}
+	msg := err.Error()
+	for _, want := range []string{"LUMBER_API_KEY", "confidence", "verbosity"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expected error to mention %q, got: %v", want, msg)
+		}
+	}
+}
+
+// --- getenvInt tests ---
+
+func TestGetenvInt(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVal   string
+		set      bool
+		fallback int
+		want     int
+	}{
+		{"empty uses fallback", "", false, 1000, 1000},
+		{"valid int", "500", true, 1000, 500},
+		{"zero", "0", true, 1000, 0},
+		{"invalid falls back", "abc", true, 1000, 1000},
+		{"negative", "-1", true, 1000, -1},
+	}
+
+	const key = "LUMBER_TEST_GETENVINT"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				os.Setenv(key, tt.envVal)
+				defer os.Unsetenv(key)
+			} else {
+				os.Unsetenv(key)
+			}
+			got := getenvInt(key, tt.fallback)
+			if got != tt.want {
+				t.Errorf("getenvInt(%q, %d) = %d, want %d", tt.envVal, tt.fallback, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_MaxBufferSizeDefault(t *testing.T) {
+	os.Unsetenv("LUMBER_MAX_BUFFER_SIZE")
+	cfg := Load()
+	if cfg.Engine.MaxBufferSize != 1000 {
+		t.Fatalf("expected default MaxBufferSize=1000, got %d", cfg.Engine.MaxBufferSize)
+	}
+}
+
+func TestLoad_MaxBufferSizeEnv(t *testing.T) {
+	os.Setenv("LUMBER_MAX_BUFFER_SIZE", "500")
+	defer os.Unsetenv("LUMBER_MAX_BUFFER_SIZE")
+	cfg := Load()
+	if cfg.Engine.MaxBufferSize != 500 {
+		t.Fatalf("expected MaxBufferSize=500, got %d", cfg.Engine.MaxBufferSize)
+	}
+}
+
+// --- shutdown timeout tests ---
+
+func TestLoad_ShutdownTimeoutDefault(t *testing.T) {
+	os.Unsetenv("LUMBER_SHUTDOWN_TIMEOUT")
+	cfg := Load()
+	if cfg.ShutdownTimeout != 10*time.Second {
+		t.Fatalf("expected default ShutdownTimeout=10s, got %v", cfg.ShutdownTimeout)
+	}
+}
+
+func TestLoad_ShutdownTimeoutEnv(t *testing.T) {
+	os.Setenv("LUMBER_SHUTDOWN_TIMEOUT", "5s")
+	defer os.Unsetenv("LUMBER_SHUTDOWN_TIMEOUT")
+	cfg := Load()
+	if cfg.ShutdownTimeout != 5*time.Second {
+		t.Fatalf("expected ShutdownTimeout=5s, got %v", cfg.ShutdownTimeout)
+	}
+}
+
+// --- mode tests ---
+
+func TestLoad_ModeDefault(t *testing.T) {
+	os.Unsetenv("LUMBER_MODE")
+	cfg := Load()
+	if cfg.Mode != "stream" {
+		t.Fatalf("expected default Mode='stream', got %q", cfg.Mode)
+	}
+}
+
+func TestLoad_ModeEnv(t *testing.T) {
+	os.Setenv("LUMBER_MODE", "query")
+	defer os.Unsetenv("LUMBER_MODE")
+	cfg := Load()
+	if cfg.Mode != "query" {
+		t.Fatalf("expected Mode='query', got %q", cfg.Mode)
+	}
+}
+
+func TestValidate_BadMode(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "replay"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+	if !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("expected error to mention 'mode', got: %v", err)
+	}
+}
+
+func TestValidate_StreamModeValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "stream"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected nil error for mode='stream', got: %v", err)
+	}
+}
+
+func TestValidate_QueryModeValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "query"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected nil error for mode='query', got: %v", err)
 	}
 }

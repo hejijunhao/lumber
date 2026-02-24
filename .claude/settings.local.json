@@ -31,7 +31,8 @@
       "Bash(mdfind:*)",
       "Bash(env:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(./lumber:*)"
     ]
   }
 }

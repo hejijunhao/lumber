@@ -3,7 +3,7 @@ package flyio
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"time"
 
@@ -174,7 +174,7 @@ func poll(ctx context.Context, client *httpclient.Client, path, cursor string, c
 
 	var resp logsResponse
 	if err := client.GetJSON(ctx, path, q, &resp); err != nil {
-		log.Printf("flyio connector: poll error: %v", err)
+		slog.Warn("poll error", "connector", "flyio", "error", err)
 		return cursor
 	}
 

@@ -3,7 +3,7 @@ package supabase
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strings"
@@ -232,7 +232,7 @@ func pollStream(ctx context.Context, client *httpclient.Client, path string, tab
 	for _, table := range tables {
 		sql, err := buildSQL(table, fromMicros, nowMicros)
 		if err != nil {
-			log.Printf("supabase connector: %v", err)
+			slog.Warn("sql build error", "connector", "supabase", "table", table, "error", err)
 			continue
 		}
 
@@ -246,7 +246,7 @@ func pollStream(ctx context.Context, client *httpclient.Client, path string, tab
 
 		var resp logsResponse
 		if err := client.GetJSON(ctx, path, q, &resp); err != nil {
-			log.Printf("supabase connector: poll error (%s): %v", table, err)
+			slog.Warn("poll error", "connector", "supabase", "table", table, "error", err)
 			continue
 		}
 

@@ -3,7 +3,7 @@ package vercel
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"time"
@@ -179,7 +179,7 @@ func poll(ctx context.Context, client *httpclient.Client, path, teamID, cursor s
 
 	var resp logsResponse
 	if err := client.GetJSON(ctx, path, q, &resp); err != nil {
-		log.Printf("vercel connector: poll error: %v", err)
+		slog.Warn("poll error", "connector", "vercel", "error", err)
 		return cursor
 	}
 

@@ -12,25 +12,28 @@ import (
 
 // streamBuffer accumulates events and flushes deduplicated batches on a timer.
 type streamBuffer struct {
-	dedup  *dedup.Deduplicator
-	out    output.Output
-	window time.Duration
+	dedup   *dedup.Deduplicator
+	out     output.Output
+	window  time.Duration
+	maxSize int // 0 means unlimited (backward compat)
 
 	mu      sync.Mutex
 	pending []model.CanonicalEvent
 	timer   *time.Timer
 }
 
-func newStreamBuffer(d *dedup.Deduplicator, out output.Output, window time.Duration) *streamBuffer {
+func newStreamBuffer(d *dedup.Deduplicator, out output.Output, window time.Duration, maxSize int) *streamBuffer {
 	return &streamBuffer{
-		dedup:  d,
-		out:    out,
-		window: window,
+		dedup:   d,
+		out:     out,
+		window:  window,
+		maxSize: maxSize,
 	}
 }
 
 // add appends an event to the buffer. If this is the first event, starts the flush timer.
-func (b *streamBuffer) add(event model.CanonicalEvent) {
+// Returns true if the buffer is full and needs flushing.
+func (b *streamBuffer) add(event model.CanonicalEvent) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -39,6 +42,7 @@ func (b *streamBuffer) add(event model.CanonicalEvent) {
 		// First event — start timer.
 		b.timer = time.NewTimer(b.window)
 	}
+	return b.maxSize > 0 && len(b.pending) >= b.maxSize
 }
 
 // flushCh returns the timer's channel, or nil if no timer is active.

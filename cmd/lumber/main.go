@@ -2,8 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,6 +16,7 @@ import (
 	"github.com/crimson-sun/lumber/internal/engine/dedup"
 	"github.com/crimson-sun/lumber/internal/engine/embedder"
 	"github.com/crimson-sun/lumber/internal/engine/taxonomy"
+	"github.com/crimson-sun/lumber/internal/logging"
 	"github.com/crimson-sun/lumber/internal/output/stdout"
 	"github.com/crimson-sun/lumber/internal/pipeline"
 
@@ -27,23 +27,31 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg := config.LoadWithFlags()
+	logging.Init(cfg.Output.Format == "stdout", logging.ParseLevel(cfg.LogLevel))
+
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	// Initialize embedder.
 	emb, err := embedder.New(cfg.Engine.ModelPath, cfg.Engine.VocabPath, cfg.Engine.ProjectionPath)
 	if err != nil {
-		log.Fatalf("failed to create embedder: %v", err)
+		slog.Error("failed to create embedder", "error", err)
+		os.Exit(1)
 	}
 	defer emb.Close()
-	fmt.Fprintf(os.Stderr, "lumber: embedder loaded model=%s dim=%d\n", cfg.Engine.ModelPath, emb.EmbedDim())
+	slog.Info("embedder loaded", "model", cfg.Engine.ModelPath, "dim", emb.EmbedDim())
 
 	// Initialize taxonomy with default labels.
 	t0 := time.Now()
 	tax, err := taxonomy.New(taxonomy.DefaultRoots(), emb)
 	if err != nil {
-		log.Fatalf("failed to create taxonomy: %v", err)
+		slog.Error("failed to create taxonomy", "error", err)
+		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "lumber: taxonomy pre-embedded %d labels in %s\n", len(tax.Labels()), time.Since(t0).Round(time.Millisecond))
+	slog.Info("taxonomy pre-embedded", "labels", len(tax.Labels()), "duration", time.Since(t0).Round(time.Millisecond))
 
 	// Initialize classifier and compactor.
 	cls := classifier.New(cfg.Engine.ConfidenceThreshold)
@@ -58,7 +66,8 @@ func main() {
 	// Resolve connector.
 	ctor, err := connector.Get(cfg.Connector.Provider)
 	if err != nil {
-		log.Fatalf("failed to get connector: %v", err)
+		slog.Error("failed to get connector", "error", err)
+		os.Exit(1)
 	}
 	conn := ctor()
 
@@ -67,7 +76,10 @@ func main() {
 	if cfg.Engine.DedupWindow > 0 {
 		d := dedup.New(dedup.Config{Window: cfg.Engine.DedupWindow})
 		pipeOpts = append(pipeOpts, pipeline.WithDedup(d, cfg.Engine.DedupWindow))
-		fmt.Fprintf(os.Stderr, "lumber: dedup enabled window=%s\n", cfg.Engine.DedupWindow)
+		slog.Info("dedup enabled", "window", cfg.Engine.DedupWindow)
+	}
+	if cfg.Engine.MaxBufferSize > 0 {
+		pipeOpts = append(pipeOpts, pipeline.WithMaxBufferSize(cfg.Engine.MaxBufferSize))
 	}
 	p := pipeline.New(conn, eng, out, pipeOpts...)
 	defer p.Close()
@@ -76,15 +88,28 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigCh := make(chan os.Signal, 1)
+	sigCh := make(chan os.Signal, 2) // buffer 2 to catch second signal
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		fmt.Fprintf(os.Stderr, "\nreceived %v, shutting down...\n", sig)
+		slog.Info("shutting down", "signal", sig, "timeout", cfg.ShutdownTimeout)
 		cancel()
+
+		// Shutdown timer — force exit if drain exceeds timeout.
+		timer := time.NewTimer(cfg.ShutdownTimeout)
+		defer timer.Stop()
+
+		select {
+		case sig := <-sigCh:
+			slog.Warn("second signal, forcing exit", "signal", sig)
+			os.Exit(1)
+		case <-timer.C:
+			slog.Error("shutdown timeout exceeded, forcing exit", "timeout", cfg.ShutdownTimeout)
+			os.Exit(1)
+		}
 	}()
 
-	// Start streaming.
+	// Start pipeline.
 	connCfg := connector.ConnectorConfig{
 		Provider: cfg.Connector.Provider,
 		APIKey:   cfg.Connector.APIKey,
@@ -92,9 +117,25 @@ func main() {
 		Extra:    cfg.Connector.Extra,
 	}
 
-	fmt.Fprintf(os.Stderr, "lumber: starting with connector=%s\n", cfg.Connector.Provider)
-	if err := p.Stream(ctx, connCfg); err != nil && err != context.Canceled {
-		log.Fatalf("pipeline error: %v", err)
+	switch cfg.Mode {
+	case "query":
+		slog.Info("starting query", "connector", cfg.Connector.Provider,
+			"from", cfg.QueryFrom, "to", cfg.QueryTo, "limit", cfg.QueryLimit)
+		params := connector.QueryParams{
+			Start: cfg.QueryFrom,
+			End:   cfg.QueryTo,
+			Limit: cfg.QueryLimit,
+		}
+		if err := p.Query(ctx, connCfg, params); err != nil {
+			slog.Error("query failed", "error", err)
+			os.Exit(1)
+		}
+	default: // "stream"
+		slog.Info("starting stream", "connector", cfg.Connector.Provider)
+		if err := p.Stream(ctx, connCfg); err != nil && err != context.Canceled {
+			slog.Error("pipeline error", "error", err)
+			os.Exit(1)
+		}
 	}
 }
 
