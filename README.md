@@ -13,6 +13,7 @@
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
   <a href="#how-it-works">How It Works</a> ·
+  <a href="#connectors">Connectors</a> ·
   <a href="#taxonomy">Taxonomy</a> ·
   <a href="docs/changelog.md">Changelog</a>
 </p>
@@ -30,17 +31,17 @@ This matters most for AI agent workflows that consume logs. Raw log dumps waste 
 ## How It Works
 
 ```
-Raw logs (Vercel, AWS, Fly.io, Datadog, …)
+Raw logs (Vercel, Fly.io, Supabase, …)
    ↓  connectors
 Embed → Classify → Canonicalize → Compact
    ↓  engine
 Structured canonical events (JSON)
 ```
 
-1. **Connectors** ingest raw logs from providers (Vercel, AWS, etc.) via a unified interface
-2. **Embedder** converts each log line into a vector using a local ONNX model (~23MB, CPU-only)
-3. **Classifier** compares the vector against pre-embedded taxonomy labels via cosine similarity
-4. **Compactor** strips noise and truncates for token efficiency
+1. **Connectors** ingest raw logs from providers via a unified interface (stream or query)
+2. **Embedder** converts each log line into a 1024-dim vector using a local ONNX model (~23MB, CPU-only)
+3. **Classifier** compares the vector against 42 pre-embedded taxonomy labels via cosine similarity
+4. **Compactor** strips noise, truncates stack traces, and deduplicates repeated events
 
 A raw log like this:
 
@@ -83,30 +84,147 @@ make download-model
 make build
 ```
 
-### Run
+### Stream logs
 
 ```bash
-# Set your provider credentials
 export LUMBER_CONNECTOR=vercel
 export LUMBER_API_KEY=your-token-here
+export LUMBER_VERCEL_PROJECT_ID=prj_your-project-id
 
-# Start streaming
 ./bin/lumber
 ```
 
-### Configuration
+### Query historical logs
+
+```bash
+./bin/lumber -mode query \
+  -from 2026-02-24T00:00:00Z \
+  -to 2026-02-24T01:00:00Z
+```
+
+### Check version
+
+```bash
+./bin/lumber -version
+```
+
+---
+
+## CLI Flags
+
+Flags override environment variables when set explicitly.
+
+```
+lumber [flags]
+
+  -mode string        Pipeline mode: stream or query
+  -connector string   Connector: vercel, flyio, supabase
+  -from string        Query start time (RFC3339)
+  -to string          Query end time (RFC3339)
+  -limit int          Query result limit
+  -verbosity string   Verbosity: minimal, standard, full
+  -pretty             Pretty-print JSON output
+  -log-level string   Log level: debug, info, warn, error
+  -version            Print version and exit
+```
+
+Examples:
+
+```bash
+# Stream from Fly.io with debug logging
+./bin/lumber -connector flyio -log-level debug
+
+# Query last hour, pretty-printed
+./bin/lumber -mode query -from 2026-02-24T07:00:00Z -to 2026-02-24T08:00:00Z -pretty
+
+# Minimal verbosity for token-efficient output
+./bin/lumber -verbosity minimal
+```
+
+---
+
+## Connectors
+
+Three connectors are implemented. Each handles auth, pagination, rate limiting, and produces `RawLog` entries that feed into the classification engine.
+
+### Vercel
+
+Connects to the Vercel REST API for project logs.
+
+```bash
+export LUMBER_CONNECTOR=vercel
+export LUMBER_API_KEY=your-vercel-token
+export LUMBER_VERCEL_PROJECT_ID=prj_xxx
+export LUMBER_VERCEL_TEAM_ID=team_xxx   # optional
+```
+
+### Fly.io
+
+Connects to the Fly.io HTTP logs API.
+
+```bash
+export LUMBER_CONNECTOR=flyio
+export LUMBER_API_KEY=your-fly-token
+export LUMBER_FLY_APP_NAME=your-app-name
+```
+
+### Supabase
+
+Connects to the Supabase Analytics API. Queries across multiple log tables.
+
+```bash
+export LUMBER_CONNECTOR=supabase
+export LUMBER_API_KEY=your-supabase-service-key
+export LUMBER_SUPABASE_PROJECT_REF=your-project-ref
+export LUMBER_SUPABASE_TABLES=edge_logs,postgres_logs  # optional, defaults to all
+```
+
+---
+
+## Configuration
+
+### Core settings
 
 | Variable | Default | Description |
 |---|---|---|
-| `LUMBER_CONNECTOR` | `vercel` | Log provider to connect to |
+| `LUMBER_CONNECTOR` | `vercel` | Log provider: `vercel`, `flyio`, `supabase` |
 | `LUMBER_API_KEY` | — | Provider API key/token |
-| `LUMBER_ENDPOINT` | — | Provider-specific endpoint URL |
-| `LUMBER_MODEL_PATH` | `models/model_quantized.onnx` | Path to ONNX model file |
-| `LUMBER_VOCAB_PATH` | `models/vocab.txt` | Path to tokenizer vocabulary |
+| `LUMBER_ENDPOINT` | — | Provider API endpoint URL override |
+| `LUMBER_MODE` | `stream` | Pipeline mode: `stream` or `query` |
 | `LUMBER_VERBOSITY` | `standard` | Output verbosity: `minimal`, `standard`, `full` |
 | `LUMBER_OUTPUT` | `stdout` | Output destination |
+| `LUMBER_OUTPUT_PRETTY` | `false` | Pretty-print JSON output |
 
-### Verbosity Levels
+### Engine settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `LUMBER_MODEL_PATH` | `models/model_quantized.onnx` | Path to ONNX model file |
+| `LUMBER_VOCAB_PATH` | `models/vocab.txt` | Path to tokenizer vocabulary |
+| `LUMBER_PROJECTION_PATH` | `models/2_Dense/model.safetensors` | Path to projection weights |
+| `LUMBER_CONFIDENCE_THRESHOLD` | `0.5` | Min confidence to classify (0–1) |
+| `LUMBER_DEDUP_WINDOW` | `5s` | Dedup window duration (`0` disables) |
+| `LUMBER_MAX_BUFFER_SIZE` | `1000` | Max events buffered before force flush |
+
+### Operational settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `LUMBER_LOG_LEVEL` | `info` | Internal log level: `debug`, `info`, `warn`, `error` |
+| `LUMBER_SHUTDOWN_TIMEOUT` | `10s` | Max drain time on shutdown |
+| `LUMBER_POLL_INTERVAL` | provider default | Polling interval for stream mode |
+
+### Provider-specific settings
+
+| Variable | Provider | Description |
+|---|---|---|
+| `LUMBER_VERCEL_PROJECT_ID` | Vercel | Vercel project ID |
+| `LUMBER_VERCEL_TEAM_ID` | Vercel | Vercel team ID (optional) |
+| `LUMBER_FLY_APP_NAME` | Fly.io | Fly.io application name |
+| `LUMBER_SUPABASE_PROJECT_REF` | Supabase | Supabase project reference |
+| `LUMBER_SUPABASE_TABLES` | Supabase | Comma-separated log table list |
+
+### Verbosity levels
 
 | Level | Behavior |
 |---|---|
@@ -118,20 +236,20 @@ export LUMBER_API_KEY=your-token-here
 
 ## Taxonomy
 
-Lumber ships with a curated taxonomy of ~40 leaf labels organized under 8 top-level categories:
+Lumber ships with 42 leaf labels organized under 8 top-level categories. Every log is classified into exactly one leaf. The taxonomy is opinionated by design — a finite label set makes downstream consumption predictable.
 
 | Category | Labels |
 |---|---|
-| **ERROR** | runtime_exception, connection_failure, timeout, auth_failure, validation_error |
-| **REQUEST** | incoming_request, outgoing_request, response |
-| **DEPLOY** | build_started, build_succeeded, build_failed, deploy_started, deploy_succeeded, deploy_failed |
-| **SYSTEM** | startup, shutdown, health_check, resource_limit, scaling |
-| **SECURITY** | login_success, login_failure, rate_limited, suspicious_activity |
-| **DATA** | query, migration, cache_hit, cache_miss |
+| **ERROR** | connection_failure, auth_failure, authorization_failure, timeout, runtime_exception, validation_error, out_of_memory, rate_limited, dependency_error |
+| **REQUEST** | success, client_error, server_error, redirect, slow_request |
+| **DEPLOY** | build_started, build_succeeded, build_failed, deploy_started, deploy_succeeded, deploy_failed, rollback |
+| **SYSTEM** | health_check, scaling_event, resource_alert, process_lifecycle, config_change |
+| **ACCESS** | login_success, login_failure, session_expired, permission_change, api_key_event |
+| **PERFORMANCE** | latency_spike, throughput_drop, queue_backlog, cache_event, db_slow_query |
+| **DATA** | query_executed, migration, replication |
 | **SCHEDULED** | cron_started, cron_completed, cron_failed |
-| **APPLICATION** | info, warning, debug |
 
-Every log is classified into exactly one leaf label. The taxonomy is opinionated by design — a finite set of labels makes downstream consumption predictable.
+Classification uses cosine similarity between the log's embedding vector and pre-embedded taxonomy label descriptions. Labels below the confidence threshold (default 0.5) are marked `UNCLASSIFIED`.
 
 ---
 
@@ -142,8 +260,9 @@ Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/onnx-community/
 | Property | Value |
 |---|---|
 | Size | ~23MB (int8 quantized) |
-| Embedding dimension | 384 |
+| Output dimension | 1024 (384-dim transformer + learned projection) |
 | Tokenizer | WordPiece (30,522 tokens, lowercase) |
+| Max sequence length | 128 tokens |
 | Runtime | ONNX Runtime via [onnxruntime-go](https://github.com/yalue/onnxruntime_go) |
 
 ---
@@ -151,19 +270,28 @@ Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/onnx-community/
 ## Project Structure
 
 ```
-cmd/lumber/          CLI entrypoint
+cmd/lumber/              CLI entrypoint
 internal/
-  config/            Environment-based configuration
-  connector/         Provider adapters (Connector interface + registry)
-  engine/
-    embedder/        ONNX Runtime embedding (Embedder interface)
-    classifier/      Cosine similarity classification
-    compactor/       Token-aware log compaction
-    taxonomy/        Taxonomy tree and default labels
-  model/             Domain types (RawLog, CanonicalEvent, TaxonomyNode)
-  output/            Output writers (Output interface)
-  pipeline/          Stream and Query orchestration
-models/              ONNX model files (downloaded via make)
+  config/                Environment + CLI flag configuration
+  connector/             Connector interface, registry
+    vercel/              Vercel REST API connector
+    flyio/               Fly.io HTTP logs connector
+    supabase/            Supabase Analytics connector
+    httpclient/          Shared HTTP client (auth, retry, rate limits)
+  engine/                Classification engine orchestration
+    embedder/            ONNX Runtime embedding (tokenizer, projection)
+    classifier/          Cosine similarity classification
+    compactor/           Token-aware log compaction
+    dedup/               Event deduplication
+    taxonomy/            Taxonomy tree and default labels
+    testdata/            153-entry labeled test corpus
+  logging/               Structured internal logging (slog)
+  model/                 Domain types (RawLog, CanonicalEvent, TaxonomyNode)
+  output/                Output formatting and writers
+    stdout/              NDJSON stdout writer
+  pipeline/              Stream and Query orchestration, buffering
+models/                  ONNX model files (downloaded via make)
+docs/                    Plans, completion notes, changelog
 ```
 
 ---
@@ -182,16 +310,24 @@ make download-model  # Fetch ONNX model + tokenizer from HuggingFace
 
 ## Status
 
-Lumber is under active development.
+Lumber is in beta.
 
 - [x] Project scaffolding and pipeline skeleton
-- [x] Model download pipeline
-- [x] ONNX Runtime session lifecycle and raw inference
-- [ ] Tokenizer integration
-- [ ] Mean pooling and end-to-end embedding
-- [ ] Taxonomy label pre-embedding
-- [ ] Connector implementations (Vercel, AWS, etc.)
-- [ ] Output formats beyond stdout
+- [x] ONNX Runtime integration and model download
+- [x] Pure-Go WordPiece tokenizer
+- [x] Mean pooling and dense projection (1024-dim embeddings)
+- [x] Taxonomy pre-embedding (42 leaves, 8 roots)
+- [x] Classification pipeline — 100% accuracy on 153-entry test corpus
+- [x] Log connectors (Vercel, Fly.io, Supabase)
+- [x] Shared HTTP client with retry and rate limit handling
+- [x] Pipeline integration (stream + query modes)
+- [x] Structured internal logging, config validation
+- [x] Per-log error resilience, bounded dedup buffer
+- [x] Graceful shutdown with timeout
+- [x] CLI flags and query mode access
+- [ ] Additional connectors (AWS CloudWatch, Datadog, Grafana Loki)
+- [ ] Output formats beyond stdout (gRPC, WebSocket, webhook)
+- [ ] Adaptive taxonomy (self-growing/trimming)
 
 See [docs/changelog.md](docs/changelog.md) for detailed release notes.
 

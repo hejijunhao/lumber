@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -28,6 +29,12 @@ import (
 
 func main() {
 	cfg := config.LoadWithFlags()
+
+	if cfg.ShowVersion {
+		fmt.Fprintf(os.Stderr, "lumber %s\n", config.Version)
+		os.Exit(0)
+	}
+
 	logging.Init(cfg.Output.Format == "stdout", logging.ParseLevel(cfg.LogLevel))
 
 	if err := cfg.Validate(); err != nil {

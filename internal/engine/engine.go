@@ -30,6 +30,11 @@ func New(emb embedder.Embedder, tax *taxonomy.Taxonomy, cls *classifier.Classifi
 
 // Process classifies and compacts a single raw log into a canonical event.
 func (e *Engine) Process(raw model.RawLog) (model.CanonicalEvent, error) {
+	// Empty/whitespace input cannot be meaningfully classified.
+	if strings.TrimSpace(raw.Raw) == "" {
+		return emptyInputEvent(raw), nil
+	}
+
 	vec, err := e.embedder.Embed(raw.Raw)
 	if err != nil {
 		return model.CanonicalEvent{}, err
@@ -46,10 +51,15 @@ func (e *Engine) Process(raw model.RawLog) (model.CanonicalEvent, error) {
 
 	compacted, summary := e.compactor.Compact(raw.Raw, eventType)
 
+	severity := result.Label.Severity
+	if eventType == "UNCLASSIFIED" && severity == "" {
+		severity = "warning"
+	}
+
 	return model.CanonicalEvent{
 		Type:       eventType,
 		Category:   category,
-		Severity:   result.Label.Severity,
+		Severity:   severity,
 		Timestamp:  raw.Timestamp,
 		Summary:    summary,
 		Confidence: result.Confidence,
@@ -76,6 +86,12 @@ func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, erro
 
 	events := make([]model.CanonicalEvent, len(raws))
 	for i, raw := range raws {
+		// Empty/whitespace input: skip classification.
+		if strings.TrimSpace(raw.Raw) == "" {
+			events[i] = emptyInputEvent(raw)
+			continue
+		}
+
 		result := e.classifier.Classify(vecs[i], e.taxonomy.Labels())
 
 		parts := strings.SplitN(result.Label.Path, ".", 2)
@@ -87,10 +103,15 @@ func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, erro
 
 		compacted, summary := e.compactor.Compact(raw.Raw, eventType)
 
+		severity := result.Label.Severity
+		if eventType == "UNCLASSIFIED" && severity == "" {
+			severity = "warning"
+		}
+
 		events[i] = model.CanonicalEvent{
 			Type:       eventType,
 			Category:   category,
-			Severity:   result.Label.Severity,
+			Severity:   severity,
 			Timestamp:  raw.Timestamp,
 			Summary:    summary,
 			Confidence: result.Confidence,
@@ -98,4 +119,16 @@ func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, erro
 		}
 	}
 	return events, nil
+}
+
+// emptyInputEvent returns an UNCLASSIFIED event for empty/whitespace-only input.
+func emptyInputEvent(raw model.RawLog) model.CanonicalEvent {
+	return model.CanonicalEvent{
+		Type:       "UNCLASSIFIED",
+		Category:   "empty_input",
+		Severity:   "warning",
+		Timestamp:  raw.Timestamp,
+		Confidence: 0,
+		Raw:        raw.Raw,
+	}
 }

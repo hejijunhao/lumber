@@ -381,6 +381,21 @@ func TestValidate_BadMode(t *testing.T) {
 	}
 }
 
+// --- version tests ---
+
+func TestLoad_ShowVersionDefault(t *testing.T) {
+	cfg := Load()
+	if cfg.ShowVersion {
+		t.Fatal("expected default ShowVersion=false")
+	}
+}
+
+func TestVersion_IsSet(t *testing.T) {
+	if Version == "" {
+		t.Fatal("expected non-empty Version constant")
+	}
+}
+
 func TestValidate_StreamModeValid(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Mode = "stream"

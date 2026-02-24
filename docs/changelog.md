@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.5.0](#050--2026-02-23) — Pipeline integration & resilience: structured logging, config validation, per-log error handling, graceful shutdown, CLI flags
 - [0.4.1](#041--2026-02-23) — Post-review fixes: stack trace truncation, Go interleaving, test correctness
 - [0.4.0](#040--2026-02-23) — Log connectors: shared HTTP client, Vercel/Fly.io/Supabase connectors, config wiring
 - [0.3.0](#030--2026-02-22) — Classification pipeline: 42-leaf taxonomy, 104-entry test corpus, 100% accuracy, edge case hardening
@@ -13,6 +14,94 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.5.0 — 2026-02-23
+
+**Pipeline integration & resilience (Phase 5)**
+
+Phase 5 takes the working pieces (connectors, engine, output) and makes the full pipeline (connector → engine → output) run reliably with proper error handling, buffering, graceful shutdown, structured logging, CLI flags, and end-to-end integration tests. This is the "it works as a system" release.
+
+### Added
+
+- **Structured internal logging** — `internal/logging` package using Go 1.21+ `log/slog`. JSON handler when output is stdout (avoids mixing with NDJSON data), text handler otherwise. `LUMBER_LOG_LEVEL` env var (default `info`). All `fmt.Fprintf(os.Stderr)` and `log.Printf` calls replaced with `slog.Info`/`slog.Warn` across main.go and all 3 connectors.
+- **Config validation** — `Config.Validate()` method checks all fields at startup and returns all errors (not just the first): API key required when connector set, model/vocab/projection files exist on disk, confidence threshold in [0,1], verbosity enum, dedup window non-negative, mode enum. Called in main.go before any component initialization.
+- **Per-log error resilience** — `engine.Process()` failures now log a warning, increment an atomic skip counter, and continue processing. One bad log doesn't kill the pipeline. In query mode, `ProcessBatch()` failure falls back to individual processing with skip-and-continue. `Processor` interface extracted from `*engine.Engine` to enable mock-based testing.
+- **Bounded dedup buffer** — `streamBuffer` gains a `maxSize` field (default 1000 via `LUMBER_MAX_BUFFER_SIZE`). When the buffer hits max, it force-flushes immediately — no events dropped, no unbounded memory growth during log storms. `add()` returns a bool indicating full state.
+- **Graceful shutdown** — Configurable `LUMBER_SHUTDOWN_TIMEOUT` (default 10s). On first SIGINT/SIGTERM: cancel context, start shutdown timer. On second signal: immediate `os.Exit(1)`. On timeout: `os.Exit(1)` with error log. Final dedup flush uses `context.Background()` so writes can complete during drain.
+- **CLI flags** — 8 flags via stdlib `flag` package: `-mode`, `-connector`, `-from`, `-to`, `-limit`, `-verbosity`, `-pretty`, `-log-level`. Flags override env vars. `LoadWithFlags()` uses `flag.Visit()` to overlay only explicitly-set flags. Query mode now accessible from the CLI (`-mode query` with `-from`/`-to`/`-limit`).
+- **End-to-end integration tests** — 4 tests in `internal/pipeline/integration_test.go`: httptest server → Vercel connector → real ONNX engine → mock output. Guarded by `skipWithoutModel(t)` so `go test ./...` always passes. Tests cover stream, query, bad-log resilience, and dedup.
+
+### Changed
+
+- `cmd/lumber/main.go` — rewritten: uses `config.LoadWithFlags()`, calls `logging.Init()` and `cfg.Validate()`, stream/query mode switch, graceful shutdown with timeout and double-signal handling
+- `internal/pipeline/pipeline.go` — `Processor` interface replaces concrete `*engine.Engine`, atomic skip counter, `processIndividual()` fallback helper, `WithMaxBufferSize` option, `context.Background()` for final dedup flush
+- `internal/pipeline/buffer.go` — `maxSize` field, `add()` returns bool for force-flush signal
+- `internal/config/config.go` — `LogLevel`, `ShutdownTimeout`, `Mode`, `QueryFrom`/`QueryTo`/`QueryLimit`, `MaxBufferSize` fields added, `Validate()` method, `LoadWithFlags()` with 8 CLI flags, `getenvInt`/`getenvDuration`/`getenvBool` helpers
+- `internal/connector/vercel/vercel.go` — `log.Printf` → `slog.Warn`
+- `internal/connector/flyio/flyio.go` — `log.Printf` → `slog.Warn`
+- `internal/connector/supabase/supabase.go` — `log.Printf` → `slog.Warn` (x2)
+
+### Design decisions
+
+- **`log/slog` over third-party loggers.** Stdlib since Go 1.21, no dependencies, structured by default, `slog.SetDefault()` means call sites use `slog.Info()` directly without passing logger instances.
+- **`Processor` interface for testability.** The pipeline needs to call `Process()` and `ProcessBatch()`. Extracting an interface from `*engine.Engine` enables mock-based tests for error injection without ONNX model files.
+- **Atomic skip counter over channel-based counting.** `sync/atomic.Int64` is simpler and has zero contention for the expected case (most logs succeed). Reported once on pipeline close.
+- **`flag.Visit()` for CLI override.** Go's `flag` package doesn't distinguish "default value" from "not set". `flag.Visit()` only visits flags explicitly set on the command line, so env var values aren't silently overridden by flag defaults.
+- **`context.Background()` for final dedup flush.** The already-cancelled context would cause `output.Write()` to fail immediately during shutdown drain. The shutdown timer in main.go provides the hard bound instead.
+
+### New environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LUMBER_LOG_LEVEL` | `info` | Internal log level: debug, info, warn, error |
+| `LUMBER_SHUTDOWN_TIMEOUT` | `10s` | Max time to drain in-flight logs on shutdown |
+| `LUMBER_MAX_BUFFER_SIZE` | `1000` | Max events buffered before force dedup flush |
+| `LUMBER_MODE` | `stream` | Pipeline mode: stream or query |
+
+### New CLI flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `-mode` | string | Pipeline mode: stream or query |
+| `-connector` | string | Connector provider |
+| `-from` | string | Query start time (RFC3339) |
+| `-to` | string | Query end time (RFC3339) |
+| `-limit` | int | Query result limit |
+| `-verbosity` | string | Output verbosity |
+| `-pretty` | bool | Pretty-print JSON |
+| `-log-level` | string | Log level |
+
+### Tests added
+
+27 new tests across 4 packages:
+
+| Package | Tests | What |
+|---------|-------|------|
+| `internal/logging` | 3 | ParseLevel, JSON handler, text handler |
+| `internal/config` | 14 | 7 validation + 2 buffer + 2 shutdown + 3 mode |
+| `internal/pipeline` | 6 | 2 error handling + 4 buffer |
+| `internal/pipeline` (integration) | 4 | Stream, query, bad log resilience, dedup |
+
+### Files changed
+
+| File | Action |
+|------|--------|
+| `internal/logging/logging.go` | **new** |
+| `internal/logging/logging_test.go` | **new** |
+| `internal/pipeline/integration_test.go` | **new** |
+| `internal/config/config.go` | modified |
+| `internal/config/config_test.go` | modified |
+| `internal/pipeline/pipeline.go` | modified |
+| `internal/pipeline/pipeline_test.go` | modified |
+| `internal/pipeline/buffer.go` | modified |
+| `internal/connector/vercel/vercel.go` | modified |
+| `internal/connector/flyio/flyio.go` | modified |
+| `internal/connector/supabase/supabase.go` | modified |
+| `cmd/lumber/main.go` | modified |
+
+**New files: 3. Modified files: 9. Total: 12.**
 
 ---
 

@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// Version is the current Lumber release version.
+const Version = "0.5.0-beta"
+
 // Config holds all Lumber configuration.
 type Config struct {
 	Connector       ConnectorConfig
@@ -20,6 +23,7 @@ type Config struct {
 	QueryFrom       time.Time     // query start time (RFC3339)
 	QueryTo         time.Time     // query end time (RFC3339)
 	QueryLimit      int           // max results; 0 = no limit
+	ShowVersion     bool          // true when -version flag is set
 }
 
 // ConnectorConfig holds connector-specific settings.
@@ -80,6 +84,7 @@ func Load() Config {
 func LoadWithFlags() Config {
 	cfg := Load()
 
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	mode := flag.String("mode", "", "Pipeline mode: stream or query")
 	connFlag := flag.String("connector", "", "Connector: vercel, flyio, supabase")
 	from := flag.String("from", "", "Query start time (RFC3339)")
@@ -89,7 +94,34 @@ func LoadWithFlags() Config {
 	pretty := flag.Bool("pretty", false, "Pretty-print JSON output")
 	logLevel := flag.String("log-level", "", "Log level: debug, info, warn, error")
 
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, `lumber %s — log normalization pipeline
+
+Usage:
+  lumber [flags]
+
+Modes:
+  lumber                              Stream logs (default)
+  lumber -mode query -from T -to T    Query historical logs
+
+Flags:
+`, Version)
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, `
+Environment variables:
+  LUMBER_CONNECTOR      Log provider (vercel, flyio, supabase)
+  LUMBER_API_KEY        Provider API key/token
+  LUMBER_VERBOSITY      Output verbosity (minimal, standard, full)
+  LUMBER_DEDUP_WINDOW   Dedup window duration (e.g. 5s, 0 to disable)
+  LUMBER_LOG_LEVEL      Internal log level (debug, info, warn, error)
+
+  See README for full configuration reference.
+`)
+	}
+
 	flag.Parse()
+
+	cfg.ShowVersion = *showVersion
 
 	// Override only explicitly-set flags.
 	flag.Visit(func(f *flag.Flag) {

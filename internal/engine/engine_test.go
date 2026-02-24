@@ -407,6 +407,58 @@ func TestCorpusConfidenceDistribution(t *testing.T) {
 
 // --- Section 6: Edge Cases & Robustness ---
 
+// panicEmbedder is a mock that panics if called — used to verify early returns
+// bypass the embedding path. Runs without ONNX model files.
+type panicEmbedder struct{}
+
+func (p panicEmbedder) Embed(string) ([]float32, error)        { panic("Embed called on empty input") }
+func (p panicEmbedder) EmbedBatch([]string) ([][]float32, error) { panic("EmbedBatch called on empty input") }
+func (p panicEmbedder) Close() error                            { return nil }
+
+func TestProcessEmptyLog_ReturnsUnclassified(t *testing.T) {
+	// Uses panicEmbedder — no ONNX required. Proves the early return works.
+	eng := New(panicEmbedder{}, nil, nil, nil)
+
+	ts := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	event, err := eng.Process(model.RawLog{Raw: "", Timestamp: ts})
+	if err != nil {
+		t.Fatalf("Process(empty) error: %v", err)
+	}
+	if event.Type != "UNCLASSIFIED" {
+		t.Errorf("Type = %q, want UNCLASSIFIED", event.Type)
+	}
+	if event.Category != "empty_input" {
+		t.Errorf("Category = %q, want empty_input", event.Category)
+	}
+	if event.Severity != "warning" {
+		t.Errorf("Severity = %q, want warning", event.Severity)
+	}
+	if event.Confidence != 0 {
+		t.Errorf("Confidence = %f, want 0", event.Confidence)
+	}
+	if !event.Timestamp.Equal(ts) {
+		t.Errorf("Timestamp not preserved: got %v, want %v", event.Timestamp, ts)
+	}
+}
+
+func TestProcessWhitespaceLog_ReturnsUnclassified(t *testing.T) {
+	eng := New(panicEmbedder{}, nil, nil, nil)
+
+	event, err := eng.Process(model.RawLog{Raw: "   \n\t  ", Timestamp: time.Now()})
+	if err != nil {
+		t.Fatalf("Process(whitespace) error: %v", err)
+	}
+	if event.Type != "UNCLASSIFIED" {
+		t.Errorf("Type = %q, want UNCLASSIFIED", event.Type)
+	}
+	if event.Category != "empty_input" {
+		t.Errorf("Category = %q, want empty_input", event.Category)
+	}
+	if event.Severity != "warning" {
+		t.Errorf("Severity = %q, want warning", event.Severity)
+	}
+}
+
 func TestProcessEmptyLog(t *testing.T) {
 	eng := newTestEngine(t)
 
@@ -414,8 +466,12 @@ func TestProcessEmptyLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process(empty) error: %v", err)
 	}
-	t.Logf("Empty log: type=%q category=%q confidence=%.3f", event.Type, event.Category, event.Confidence)
-	// Should not crash. Classification may be arbitrary but must not panic.
+	if event.Type != "UNCLASSIFIED" {
+		t.Errorf("Type = %q, want UNCLASSIFIED", event.Type)
+	}
+	if event.Severity != "warning" {
+		t.Errorf("Severity = %q, want warning", event.Severity)
+	}
 }
 
 func TestProcessWhitespaceLog(t *testing.T) {
@@ -425,7 +481,12 @@ func TestProcessWhitespaceLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process(whitespace) error: %v", err)
 	}
-	t.Logf("Whitespace log: type=%q category=%q confidence=%.3f", event.Type, event.Category, event.Confidence)
+	if event.Type != "UNCLASSIFIED" {
+		t.Errorf("Type = %q, want UNCLASSIFIED", event.Type)
+	}
+	if event.Severity != "warning" {
+		t.Errorf("Severity = %q, want warning", event.Severity)
+	}
 }
 
 func TestProcessVeryLongLog(t *testing.T) {
