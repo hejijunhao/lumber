@@ -10,7 +10,7 @@ import (
 )
 
 // Version is the current Lumber release version.
-const Version = "0.5.0-beta"
+const Version = "0.5.1-beta"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -24,6 +24,7 @@ type Config struct {
 	QueryTo         time.Time     // query end time (RFC3339)
 	QueryLimit      int           // max results; 0 = no limit
 	ShowVersion     bool          // true when -version flag is set
+	parseErrors     []string      // flag parse errors collected during LoadWithFlags
 }
 
 // ConnectorConfig holds connector-specific settings.
@@ -139,10 +140,14 @@ Environment variables:
 		case "from":
 			if t, err := time.Parse(time.RFC3339, *from); err == nil {
 				cfg.QueryFrom = t
+			} else {
+				cfg.parseErrors = append(cfg.parseErrors, fmt.Sprintf("-from: invalid RFC3339 time %q", *from))
 			}
 		case "to":
 			if t, err := time.Parse(time.RFC3339, *to); err == nil {
 				cfg.QueryTo = t
+			} else {
+				cfg.parseErrors = append(cfg.parseErrors, fmt.Sprintf("-to: invalid RFC3339 time %q", *to))
 			}
 		case "limit":
 			cfg.QueryLimit = *limit
@@ -194,6 +199,19 @@ func (c Config) Validate() error {
 	case "stream", "query":
 	default:
 		errs = append(errs, fmt.Sprintf("invalid mode %q (must be stream or query)", c.Mode))
+	}
+
+	// Flag parse errors from LoadWithFlags.
+	errs = append(errs, c.parseErrors...)
+
+	// Query mode requires from/to time range.
+	if c.Mode == "query" {
+		if c.QueryFrom.IsZero() {
+			errs = append(errs, "-from is required in query mode (RFC3339 format, e.g. 2026-02-24T00:00:00Z)")
+		}
+		if c.QueryTo.IsZero() {
+			errs = append(errs, "-to is required in query mode (RFC3339 format, e.g. 2026-02-24T01:00:00Z)")
+		}
 	}
 
 	if len(errs) > 0 {

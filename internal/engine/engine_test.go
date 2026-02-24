@@ -489,6 +489,31 @@ func TestProcessWhitespaceLog(t *testing.T) {
 	}
 }
 
+func TestProcessBatchAllEmpty_SkipsEmbedder(t *testing.T) {
+	// Uses panicEmbedder — proves EmbedBatch is never called when all inputs are empty.
+	eng := New(panicEmbedder{}, nil, nil, nil)
+
+	ts := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	events, err := eng.ProcessBatch([]model.RawLog{
+		{Raw: "", Timestamp: ts},
+		{Raw: "   \n\t  ", Timestamp: ts},
+	})
+	if err != nil {
+		t.Fatalf("ProcessBatch(all empty) error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	for i, e := range events {
+		if e.Type != "UNCLASSIFIED" {
+			t.Errorf("events[%d].Type = %q, want UNCLASSIFIED", i, e.Type)
+		}
+		if e.Category != "empty_input" {
+			t.Errorf("events[%d].Category = %q, want empty_input", i, e.Category)
+		}
+	}
+}
+
 func TestProcessVeryLongLog(t *testing.T) {
 	eng := newTestEngine(t)
 
@@ -571,6 +596,81 @@ func TestProcessMetadataNotInOutput(t *testing.T) {
 		t.Error("Type is empty")
 	}
 	t.Log("Metadata passthrough: not surfaced in CanonicalEvent (by design for Phase 2)")
+}
+
+// --- Corpus validation wrappers ---
+// These ensure corpus structural issues are caught by `go test ./...`,
+// which skips the testdata/ package (Go convention).
+
+func TestCorpusStructure(t *testing.T) {
+	corpus, err := testdata.LoadCorpus()
+	if err != nil {
+		t.Fatalf("LoadCorpus() error: %v", err)
+	}
+
+	if len(corpus) == 0 {
+		t.Fatal("corpus is empty")
+	}
+
+	for i, e := range corpus {
+		if e.Raw == "" {
+			t.Errorf("entry[%d] has empty raw", i)
+		}
+		if e.ExpectedType == "" {
+			t.Errorf("entry[%d] has empty expected_type", i)
+		}
+		if e.ExpectedCategory == "" {
+			t.Errorf("entry[%d] has empty expected_category", i)
+		}
+		if e.ExpectedSeverity == "" {
+			t.Errorf("entry[%d] has empty expected_severity", i)
+		}
+	}
+
+	t.Logf("Corpus: %d entries, all fields populated", len(corpus))
+}
+
+func TestCorpusTaxonomyCoverage(t *testing.T) {
+	corpus, err := testdata.LoadCorpus()
+	if err != nil {
+		t.Fatalf("LoadCorpus() error: %v", err)
+	}
+
+	covered := map[string]int{}
+	for _, e := range corpus {
+		covered[e.ExpectedType+"."+e.ExpectedCategory]++
+	}
+
+	// All 42 taxonomy leaves must be covered with at least 2 entries.
+	allLeaves := []string{
+		"ERROR.connection_failure", "ERROR.auth_failure", "ERROR.authorization_failure",
+		"ERROR.timeout", "ERROR.runtime_exception", "ERROR.validation_error",
+		"ERROR.out_of_memory", "ERROR.rate_limited", "ERROR.dependency_error",
+		"REQUEST.success", "REQUEST.client_error", "REQUEST.server_error",
+		"REQUEST.redirect", "REQUEST.slow_request",
+		"DEPLOY.build_started", "DEPLOY.build_succeeded", "DEPLOY.build_failed",
+		"DEPLOY.deploy_started", "DEPLOY.deploy_succeeded", "DEPLOY.deploy_failed",
+		"DEPLOY.rollback",
+		"SYSTEM.health_check", "SYSTEM.scaling_event", "SYSTEM.resource_alert",
+		"SYSTEM.process_lifecycle", "SYSTEM.config_change",
+		"ACCESS.login_success", "ACCESS.login_failure", "ACCESS.session_expired",
+		"ACCESS.permission_change", "ACCESS.api_key_event",
+		"PERFORMANCE.latency_spike", "PERFORMANCE.throughput_drop", "PERFORMANCE.queue_backlog",
+		"PERFORMANCE.cache_event", "PERFORMANCE.db_slow_query",
+		"DATA.query_executed", "DATA.migration", "DATA.replication",
+		"SCHEDULED.cron_started", "SCHEDULED.cron_completed", "SCHEDULED.cron_failed",
+	}
+
+	for _, leaf := range allLeaves {
+		count := covered[leaf]
+		if count == 0 {
+			t.Errorf("taxonomy leaf %q has no corpus entries", leaf)
+		} else if count < 2 {
+			t.Errorf("taxonomy leaf %q has only %d entry (want >= 2)", leaf, count)
+		}
+	}
+
+	t.Logf("Coverage: %d leaves, %d total entries", len(allLeaves), len(corpus))
 }
 
 func avg(vs []float64) float64 {

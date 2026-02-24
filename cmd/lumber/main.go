@@ -31,7 +31,7 @@ func main() {
 	cfg := config.LoadWithFlags()
 
 	if cfg.ShowVersion {
-		fmt.Fprintf(os.Stderr, "lumber %s\n", config.Version)
+		fmt.Printf("lumber %s\n", config.Version)
 		os.Exit(0)
 	}
 

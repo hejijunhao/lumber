@@ -407,7 +407,60 @@ func TestValidate_StreamModeValid(t *testing.T) {
 func TestValidate_QueryModeValid(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Mode = "query"
+	cfg.QueryFrom = time.Date(2026, 2, 24, 0, 0, 0, 0, time.UTC)
+	cfg.QueryTo = time.Date(2026, 2, 24, 1, 0, 0, 0, time.UTC)
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected nil error for mode='query', got: %v", err)
+		t.Fatalf("expected nil error for mode='query' with from/to set, got: %v", err)
+	}
+}
+
+func TestValidate_QueryModeMissingFrom(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "query"
+	cfg.QueryTo = time.Date(2026, 2, 24, 1, 0, 0, 0, time.UTC)
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for query mode without -from")
+	}
+	if !strings.Contains(err.Error(), "-from") {
+		t.Fatalf("expected error to mention '-from', got: %v", err)
+	}
+}
+
+func TestValidate_QueryModeMissingTo(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "query"
+	cfg.QueryFrom = time.Date(2026, 2, 24, 0, 0, 0, 0, time.UTC)
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for query mode without -to")
+	}
+	if !strings.Contains(err.Error(), "-to") {
+		t.Fatalf("expected error to mention '-to', got: %v", err)
+	}
+}
+
+func TestValidate_QueryModeMissingBoth(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "query"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for query mode without -from and -to")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "-from") || !strings.Contains(msg, "-to") {
+		t.Fatalf("expected error to mention both '-from' and '-to', got: %v", err)
+	}
+}
+
+func TestValidate_ParseErrors(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.parseErrors = []string{"-from: invalid RFC3339 time \"yesterday\""}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for parse errors")
+	}
+	if !strings.Contains(err.Error(), "invalid RFC3339") {
+		t.Fatalf("expected error to mention parse error, got: %v", err)
 	}
 }

@@ -60,7 +60,10 @@ func (b *streamBuffer) flush(ctx context.Context) error {
 	b.mu.Lock()
 	events := b.pending
 	b.pending = nil
-	b.timer = nil
+	if b.timer != nil {
+		b.timer.Stop()
+		b.timer = nil
+	}
 	b.mu.Unlock()
 
 	if len(events) == 0 {

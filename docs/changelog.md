@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.5.1](#051--2026-02-24) — Post-review fixes: version stdout, timer leak, query validation, corpus test visibility, batch embed filtering
 - [0.5.0](#050--2026-02-23) — Pipeline integration & resilience: structured logging, config validation, per-log error handling, graceful shutdown, CLI flags
 - [0.4.1](#041--2026-02-23) — Post-review fixes: stack trace truncation, Go interleaving, test correctness
 - [0.4.0](#040--2026-02-23) — Log connectors: shared HTTP client, Vercel/Fly.io/Supabase connectors, config wiring
@@ -14,6 +15,45 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.5.1 — 2026-02-24
+
+**Post-review fixes — version stdout, timer leak, query validation, corpus test visibility, batch embed filtering**
+
+Audit of the Phase 6 (Beta Validation & Polish) implementation identified 5 issues across correctness, usability, and test coverage. All fixed with 8 new tests.
+
+### Fixed
+
+- **Version output writes to stdout** — `lumber -version` was writing to stderr. POSIX convention (and most CLI tools) writes version info to stdout so scripts can capture it (`VERSION=$(lumber -version)`). Changed `fmt.Fprintf(os.Stderr, ...)` to `fmt.Printf(...)`.
+- **Timer leak in `streamBuffer.flush()`** — `flush()` set `b.timer = nil` without calling `timer.Stop()`. When flush was triggered by buffer-full before the timer fired, the old timer's internal goroutine leaked. Added `timer.Stop()` before nil assignment.
+- **Silent `-from`/`-to` parse failures** — invalid RFC3339 input to `-from` or `-to` flags was silently swallowed, leaving `QueryFrom`/`QueryTo` at zero value. Parse errors are now collected during `LoadWithFlags()` and surfaced by `Validate()`.
+- **Query mode missing from/to validation** — `lumber -mode query` without `-from` and `-to` proceeded with zero-value time range. `Validate()` now requires both when `Mode == "query"`.
+- **`ProcessBatch` embedded empty strings** — empty/whitespace inputs were passed through `EmbedBatch()` and overridden post-classification. Refactored to pre-scan inputs, filter empties, and call `EmbedBatch()` only on non-empty texts with index mapping to reassemble results.
+- **Corpus validation tests invisible to `go test ./...`** — the `testdata/` package was skipped by Go convention. Added wrapper tests in `engine_test.go` that validate corpus structure and taxonomy coverage, ensuring CI catches issues.
+
+### Tests added
+
+8 new tests across 2 packages:
+
+| Package | Tests | What |
+|---------|-------|------|
+| `internal/config` | 5 | Query mode from/to validation (3), parse error surfacing (1), updated query valid (1) |
+| `internal/engine` | 3 | Corpus structure (1), taxonomy coverage (1), batch all-empty skips embedder (1) |
+
+### Files changed
+
+| File | Action |
+|------|--------|
+| `cmd/lumber/main.go` | modified |
+| `internal/pipeline/buffer.go` | modified |
+| `internal/config/config.go` | modified |
+| `internal/config/config_test.go` | modified |
+| `internal/engine/engine.go` | modified |
+| `internal/engine/engine_test.go` | modified |
+
+**New files: 0. Modified files: 6.**
 
 ---
 

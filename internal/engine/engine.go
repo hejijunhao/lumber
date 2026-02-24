@@ -68,31 +68,41 @@ func (e *Engine) Process(raw model.RawLog) (model.CanonicalEvent, error) {
 }
 
 // ProcessBatch classifies and compacts a slice of raw logs using a single
-// batched ONNX inference call.
+// batched ONNX inference call. Empty/whitespace inputs are handled without
+// invoking the embedder.
 func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, error) {
 	if len(raws) == 0 {
 		return nil, nil
 	}
 
-	texts := make([]string, len(raws))
+	events := make([]model.CanonicalEvent, len(raws))
+
+	// Separate non-empty inputs for batched embedding. Track their indices
+	// so we can map vectors back to the original positions.
+	var embedTexts []string
+	var embedIndices []int
 	for i, raw := range raws {
-		texts[i] = raw.Raw
+		if strings.TrimSpace(raw.Raw) == "" {
+			events[i] = emptyInputEvent(raw)
+		} else {
+			embedTexts = append(embedTexts, raw.Raw)
+			embedIndices = append(embedIndices, i)
+		}
 	}
 
-	vecs, err := e.embedder.EmbedBatch(texts)
+	// If all inputs were empty, we're done.
+	if len(embedTexts) == 0 {
+		return events, nil
+	}
+
+	vecs, err := e.embedder.EmbedBatch(embedTexts)
 	if err != nil {
 		return nil, err
 	}
 
-	events := make([]model.CanonicalEvent, len(raws))
-	for i, raw := range raws {
-		// Empty/whitespace input: skip classification.
-		if strings.TrimSpace(raw.Raw) == "" {
-			events[i] = emptyInputEvent(raw)
-			continue
-		}
-
-		result := e.classifier.Classify(vecs[i], e.taxonomy.Labels())
+	for vi, origIdx := range embedIndices {
+		raw := raws[origIdx]
+		result := e.classifier.Classify(vecs[vi], e.taxonomy.Labels())
 
 		parts := strings.SplitN(result.Label.Path, ".", 2)
 		eventType := parts[0]
@@ -108,7 +118,7 @@ func (e *Engine) ProcessBatch(raws []model.RawLog) ([]model.CanonicalEvent, erro
 			severity = "warning"
 		}
 
-		events[i] = model.CanonicalEvent{
+		events[origIdx] = model.CanonicalEvent{
 			Type:       eventType,
 			Category:   category,
 			Severity:   severity,
