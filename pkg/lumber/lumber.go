@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/engine"
-	"github.com/crimson-sun/lumber/internal/engine/classifier"
-	"github.com/crimson-sun/lumber/internal/engine/compactor"
-	"github.com/crimson-sun/lumber/internal/engine/embedder"
-	"github.com/crimson-sun/lumber/internal/engine/taxonomy"
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/engine"
+	"github.com/hejijunhao/lumber/internal/engine/classifier"
+	"github.com/hejijunhao/lumber/internal/engine/compactor"
+	"github.com/hejijunhao/lumber/internal/engine/embedder"
+	"github.com/hejijunhao/lumber/internal/engine/taxonomy"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 // Lumber is a log classification engine.

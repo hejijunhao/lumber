@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/engine/compactor"
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/engine/compactor"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 func testEvent() model.CanonicalEvent {

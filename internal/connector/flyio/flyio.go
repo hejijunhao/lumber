@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/connector"
-	"github.com/crimson-sun/lumber/internal/connector/httpclient"
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/connector"
+	"github.com/hejijunhao/lumber/internal/connector/httpclient"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 const defaultEndpoint = "https://api.fly.io"

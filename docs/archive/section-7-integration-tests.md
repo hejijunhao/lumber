@@ -42,14 +42,14 @@ Local types (`vercelResponse`, `vercelLogEntry`, `vercelPagination`) that produc
 The integration test imports the full engine stack:
 
 ```
-github.com/crimson-sun/lumber/internal/engine
-github.com/crimson-sun/lumber/internal/engine/classifier
-github.com/crimson-sun/lumber/internal/engine/compactor
-github.com/crimson-sun/lumber/internal/engine/dedup
-github.com/crimson-sun/lumber/internal/engine/embedder
-github.com/crimson-sun/lumber/internal/engine/taxonomy
-github.com/crimson-sun/lumber/internal/connector
-_ github.com/crimson-sun/lumber/internal/connector/vercel  (blank import for init registration)
+github.com/hejijunhao/lumber/internal/engine
+github.com/hejijunhao/lumber/internal/engine/classifier
+github.com/hejijunhao/lumber/internal/engine/compactor
+github.com/hejijunhao/lumber/internal/engine/dedup
+github.com/hejijunhao/lumber/internal/engine/embedder
+github.com/hejijunhao/lumber/internal/engine/taxonomy
+github.com/hejijunhao/lumber/internal/connector
+_ github.com/hejijunhao/lumber/internal/connector/vercel  (blank import for init registration)
 ```
 
 Reuses `mockOutput` from `pipeline_test.go` — both files are in `package pipeline`.

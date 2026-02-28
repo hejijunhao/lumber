@@ -490,8 +490,8 @@ Only non-empty values are added. Returns `nil` if no provider-specific vars are 
 
 - Add blank imports for new connectors:
   ```go
-  _ "github.com/crimson-sun/lumber/internal/connector/flyio"
-  _ "github.com/crimson-sun/lumber/internal/connector/supabase"
+  _ "github.com/hejijunhao/lumber/internal/connector/flyio"
+  _ "github.com/hejijunhao/lumber/internal/connector/supabase"
   ```
 - Pass `Extra` when constructing `connector.ConnectorConfig`
 

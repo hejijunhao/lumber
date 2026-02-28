@@ -3,8 +3,8 @@ package taxonomy
 import (
 	"fmt"
 
-	"github.com/crimson-sun/lumber/internal/engine/embedder"
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/engine/embedder"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 // Taxonomy manages the label tree and pre-embedded label vectors.

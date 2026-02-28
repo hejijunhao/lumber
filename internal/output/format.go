@@ -1,8 +1,8 @@
 package output
 
 import (
-	"github.com/crimson-sun/lumber/internal/engine/compactor"
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/engine/compactor"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 // FormatEvent returns a copy of the event with fields stripped according to verbosity.

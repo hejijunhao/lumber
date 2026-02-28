@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 // mockEmbedder returns deterministic vectors for testing.

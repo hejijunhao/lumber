@@ -1,4 +1,4 @@
-module github.com/crimson-sun/lumber
+module github.com/hejijunhao/lumber
 
 go 1.24.0
 

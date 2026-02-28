@@ -672,7 +672,7 @@ Phase 2 takes the working embedding engine from Phase 1 and validates the full p
 
 ### Added
 
-- Go module (`github.com/crimson-sun/lumber`, Go 1.23) with Makefile (build, test, lint, clean, download-model)
+- Go module (`github.com/hejijunhao/lumber`, Go 1.23) with Makefile (build, test, lint, clean, download-model)
 - `RawLog`, `CanonicalEvent`, `TaxonomyNode`, and `EmbeddedLabel` domain types
 - `Connector` interface with provider registry and self-registering Vercel stub
 - `Embedder` interface with `ONNXEmbedder` stub (awaiting ONNX runtime integration)

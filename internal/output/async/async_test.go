@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 type mockOutput struct {

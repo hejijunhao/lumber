@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/crimson-sun/lumber/pkg/lumber"
+	"github.com/hejijunhao/lumber/pkg/lumber"
 )
 
 func Example() {

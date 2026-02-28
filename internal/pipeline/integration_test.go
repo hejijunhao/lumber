@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/connector"
-	"github.com/crimson-sun/lumber/internal/engine"
-	"github.com/crimson-sun/lumber/internal/engine/classifier"
-	"github.com/crimson-sun/lumber/internal/engine/compactor"
-	"github.com/crimson-sun/lumber/internal/engine/dedup"
-	"github.com/crimson-sun/lumber/internal/engine/embedder"
-	"github.com/crimson-sun/lumber/internal/engine/taxonomy"
+	"github.com/hejijunhao/lumber/internal/connector"
+	"github.com/hejijunhao/lumber/internal/engine"
+	"github.com/hejijunhao/lumber/internal/engine/classifier"
+	"github.com/hejijunhao/lumber/internal/engine/compactor"
+	"github.com/hejijunhao/lumber/internal/engine/dedup"
+	"github.com/hejijunhao/lumber/internal/engine/embedder"
+	"github.com/hejijunhao/lumber/internal/engine/taxonomy"
 
-	_ "github.com/crimson-sun/lumber/internal/connector/vercel"
+	_ "github.com/hejijunhao/lumber/internal/connector/vercel"
 )
 
 // Model paths relative to internal/pipeline/.

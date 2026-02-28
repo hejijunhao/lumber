@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/connector"
+	"github.com/hejijunhao/lumber/internal/connector"
 )
 
 func TestBuildSQL(t *testing.T) {

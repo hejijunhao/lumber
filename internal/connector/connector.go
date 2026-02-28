@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 // Connector defines the interface all log source connectors must implement.

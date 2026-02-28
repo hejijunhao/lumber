@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/model"
 )
 
 // mockOutput records calls for test assertions.

@@ -8,9 +8,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/crimson-sun/lumber/internal/engine/compactor"
-	"github.com/crimson-sun/lumber/internal/model"
-	"github.com/crimson-sun/lumber/internal/output"
+	"github.com/hejijunhao/lumber/internal/engine/compactor"
+	"github.com/hejijunhao/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/output"
 )
 
 const defaultBufSize = 64 * 1024 // 64KB

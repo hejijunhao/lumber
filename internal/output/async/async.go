@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crimson-sun/lumber/internal/model"
-	"github.com/crimson-sun/lumber/internal/output"
+	"github.com/hejijunhao/lumber/internal/model"
+	"github.com/hejijunhao/lumber/internal/output"
 )
 
 const (

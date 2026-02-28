@@ -33,7 +33,13 @@
       "mcp__ide__getDiagnostics",
       "Bash(echo:*)",
       "Bash(./lumber:*)",
-      "Bash(/tmp/lumber-s1:*)"
+      "Bash(/tmp/lumber-s1:*)",
+      "Bash(go mod:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(go:*)",
+      "Bash(find .:*)",
+      "Bash(gh api:*)"
     ]
   }
 }
