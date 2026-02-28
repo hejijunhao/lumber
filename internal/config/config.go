@@ -10,7 +10,7 @@ import (
 )
 
 // Version is the current Lumber release version.
-const Version = "0.5.1-beta"
+const Version = "0.6.0"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -48,8 +48,12 @@ type EngineConfig struct {
 
 // OutputConfig holds output destination settings.
 type OutputConfig struct {
-	Format string // "stdout" for now
-	Pretty bool   // pretty-print JSON output
+	Format         string            // "stdout" for now
+	Pretty         bool              // pretty-print JSON output
+	FilePath       string            // NDJSON file output path; empty = disabled
+	FileMaxSize    int64             // rotation size in bytes; 0 = no rotation
+	WebhookURL     string            // POST endpoint; empty = disabled
+	WebhookHeaders map[string]string // custom headers for webhook
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -74,8 +78,11 @@ func Load() Config {
 			MaxBufferSize:       getenvInt("LUMBER_MAX_BUFFER_SIZE", 1000),
 		},
 		Output: OutputConfig{
-			Format: getenv("LUMBER_OUTPUT", "stdout"),
-			Pretty: getenvBool("LUMBER_OUTPUT_PRETTY", false),
+			Format:      getenv("LUMBER_OUTPUT", "stdout"),
+			Pretty:      getenvBool("LUMBER_OUTPUT_PRETTY", false),
+			FilePath:    os.Getenv("LUMBER_OUTPUT_FILE"),
+			FileMaxSize: int64(getenvInt("LUMBER_OUTPUT_FILE_MAX_SIZE", 0)),
+			WebhookURL:  os.Getenv("LUMBER_WEBHOOK_URL"),
 		},
 	}
 }
@@ -94,6 +101,8 @@ func LoadWithFlags() Config {
 	verbosity := flag.String("verbosity", "", "Verbosity: minimal, standard, full")
 	pretty := flag.Bool("pretty", false, "Pretty-print JSON output")
 	logLevel := flag.String("log-level", "", "Log level: debug, info, warn, error")
+	outputFile := flag.String("output-file", "", "File path for NDJSON output")
+	webhookURL := flag.String("webhook-url", "", "Webhook POST endpoint")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `lumber %s — log normalization pipeline
@@ -151,6 +160,10 @@ Environment variables:
 			}
 		case "limit":
 			cfg.QueryLimit = *limit
+		case "output-file":
+			cfg.Output.FilePath = *outputFile
+		case "webhook-url":
+			cfg.Output.WebhookURL = *webhookURL
 		}
 	})
 
@@ -211,6 +224,23 @@ func (c Config) Validate() error {
 		}
 		if c.QueryTo.IsZero() {
 			errs = append(errs, "-to is required in query mode (RFC3339 format, e.g. 2026-02-24T01:00:00Z)")
+		}
+	}
+
+	// Webhook URL must be parseable if set.
+	if c.Output.WebhookURL != "" {
+		if !strings.HasPrefix(c.Output.WebhookURL, "http://") && !strings.HasPrefix(c.Output.WebhookURL, "https://") {
+			errs = append(errs, fmt.Sprintf("invalid webhook URL %q (must start with http:// or https://)", c.Output.WebhookURL))
+		}
+	}
+
+	// File output parent directory must exist if set.
+	if c.Output.FilePath != "" {
+		dir := c.Output.FilePath[:max(strings.LastIndex(c.Output.FilePath, "/"), 0)]
+		if dir != "" {
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				errs = append(errs, fmt.Sprintf("output file directory does not exist: %s", dir))
+			}
 		}
 	}
 

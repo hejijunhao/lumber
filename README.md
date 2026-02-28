@@ -267,10 +267,86 @@ Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/onnx-community/
 
 ---
 
+## Library Usage
+
+Lumber can be imported as a Go library. Classify log text directly in your application — no subprocess, no stdout parsing.
+
+```bash
+go get github.com/crimson-sun/lumber
+```
+
+### Basic classification
+
+```go
+l, err := lumber.New(lumber.WithModelDir("models/"))
+if err != nil {
+    log.Fatal(err)
+}
+defer l.Close()
+
+event, _ := l.Classify("ERROR: connection refused to db-primary:5432")
+fmt.Println(event.Type, event.Category) // ERROR connection_failure
+```
+
+### Batch classification
+
+```go
+events, _ := l.ClassifyBatch([]string{
+    "ERROR: connection refused",
+    "GET /api/users 200 OK 12ms",
+    "Build succeeded in 45s",
+})
+```
+
+### Structured input with metadata
+
+```go
+event, _ := l.ClassifyLog(lumber.Log{
+    Text:      "ERROR: connection refused",
+    Timestamp: time.Now(),
+    Source:    "vercel",
+})
+```
+
+### Taxonomy introspection
+
+```go
+for _, cat := range l.Taxonomy() {
+    fmt.Printf("%s: %d labels\n", cat.Name, len(cat.Labels))
+}
+```
+
+The `Lumber` instance is safe for concurrent use. Create once, reuse across requests.
+
+---
+
+## Output Destinations
+
+Lumber supports multiple simultaneous output destinations.
+
+| Destination | Env Var | CLI Flag | Behavior |
+|---|---|---|---|
+| **stdout** | (always on) | — | NDJSON to stdout (synchronous) |
+| **File** | `LUMBER_OUTPUT_FILE` | `-output-file` | NDJSON to file with optional rotation |
+| **Webhook** | `LUMBER_WEBHOOK_URL` | `-webhook-url` | Batched HTTP POST with retry |
+
+File and webhook outputs run asynchronously — they don't stall the pipeline. Webhook uses drop-on-full semantics (lossy by design for non-critical destinations).
+
+```bash
+# Stream to stdout + file + webhook simultaneously
+export LUMBER_OUTPUT_FILE=/var/log/lumber/events.jsonl
+export LUMBER_OUTPUT_FILE_MAX_SIZE=104857600  # 100MB rotation
+export LUMBER_WEBHOOK_URL=https://hooks.example.com/lumber
+./bin/lumber
+```
+
+---
+
 ## Project Structure
 
 ```
 cmd/lumber/              CLI entrypoint
+pkg/lumber/              Public library API (Classify, ClassifyBatch, Taxonomy)
 internal/
   config/                Environment + CLI flag configuration
   connector/             Connector interface, registry
@@ -289,6 +365,10 @@ internal/
   model/                 Domain types (RawLog, CanonicalEvent, TaxonomyNode)
   output/                Output formatting and writers
     stdout/              NDJSON stdout writer
+    file/                NDJSON file writer with rotation
+    webhook/             Batched HTTP POST with retry
+    multi/               Fan-out to multiple outputs
+    async/               Channel-based async wrapper
   pipeline/              Stream and Query orchestration, buffering
 models/                  ONNX model files (downloaded via make)
 docs/                    Plans, completion notes, changelog
@@ -325,8 +405,10 @@ Lumber is in beta.
 - [x] Per-log error resilience, bounded dedup buffer
 - [x] Graceful shutdown with timeout
 - [x] CLI flags and query mode access
+- [x] Multi-output architecture (file, webhook, async fan-out)
+- [x] Public library API (`pkg/lumber`)
 - [ ] Additional connectors (AWS CloudWatch, Datadog, Grafana Loki)
-- [ ] Output formats beyond stdout (gRPC, WebSocket, webhook)
+- [ ] HTTP server mode
 - [ ] Adaptive taxonomy (self-growing/trimming)
 
 See [docs/changelog.md](docs/changelog.md) for detailed release notes.

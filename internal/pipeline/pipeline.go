@@ -28,6 +28,7 @@ type Pipeline struct {
 	window        time.Duration
 	maxBufferSize int
 	skippedLogs   atomic.Int64
+	writtenEvents atomic.Int64
 }
 
 // Option configures a Pipeline.
@@ -101,13 +102,16 @@ func (p *Pipeline) streamDirect(ctx context.Context, ch <-chan model.RawLog) err
 			if err := p.output.Write(ctx, event); err != nil {
 				return fmt.Errorf("pipeline output: %w", err)
 			}
+			p.writtenEvents.Add(1)
 		}
 	}
 }
 
 // streamWithDedup buffers events and flushes deduplicated batches on a timer.
 func (p *Pipeline) streamWithDedup(ctx context.Context, ch <-chan model.RawLog) error {
-	buf := newStreamBuffer(p.dedup, p.output, p.window, p.maxBufferSize)
+	buf := newStreamBuffer(p.dedup, p.output, p.window, p.maxBufferSize, func() {
+		p.writtenEvents.Add(1)
+	})
 
 	for {
 		select {
@@ -170,6 +174,7 @@ func (p *Pipeline) Query(ctx context.Context, cfg connector.ConnectorConfig, par
 		if err := p.output.Write(ctx, event); err != nil {
 			return fmt.Errorf("pipeline output: %w", err)
 		}
+		p.writtenEvents.Add(1)
 	}
 	return nil
 }
@@ -191,8 +196,10 @@ func (p *Pipeline) processIndividual(raws []model.RawLog) []model.CanonicalEvent
 
 // Close shuts down the output.
 func (p *Pipeline) Close() error {
-	if skipped := p.skippedLogs.Load(); skipped > 0 {
-		slog.Info("pipeline closing", "total_skipped_logs", skipped)
+	written := p.writtenEvents.Load()
+	skipped := p.skippedLogs.Load()
+	if written > 0 || skipped > 0 {
+		slog.Info("pipeline closing", "total_events_written", written, "total_skipped_logs", skipped)
 	}
 	return p.output.Close()
 }

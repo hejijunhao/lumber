@@ -124,7 +124,7 @@ func (m *mockOutput) Events() []model.CanonicalEvent {
 func TestStreamBufferFlush(t *testing.T) {
 	out := &mockOutput{}
 	d := dedup.New(dedup.Config{Window: time.Second})
-	buf := newStreamBuffer(d, out, 100*time.Millisecond, 0)
+	buf := newStreamBuffer(d, out, 100*time.Millisecond, 0, nil)
 
 	t0 := time.Now()
 	// Add 10 identical events.
@@ -161,7 +161,7 @@ func TestStreamBufferFlush(t *testing.T) {
 func TestStreamBufferContextCancel(t *testing.T) {
 	out := &mockOutput{}
 	d := dedup.New(dedup.Config{Window: 10 * time.Second})
-	buf := newStreamBuffer(d, out, 10*time.Second, 0) // Long window — won't fire.
+	buf := newStreamBuffer(d, out, 10*time.Second, 0, nil) // Long window — won't fire.
 
 	t0 := time.Now()
 	buf.add(model.CanonicalEvent{
@@ -197,7 +197,7 @@ func TestPipelineWithoutDedup(t *testing.T) {
 	// Verify that a pipeline without dedup passes events directly.
 	out := &mockOutput{}
 	d := dedup.New(dedup.Config{Window: time.Second})
-	buf := newStreamBuffer(d, out, 50*time.Millisecond, 0)
+	buf := newStreamBuffer(d, out, 50*time.Millisecond, 0, nil)
 
 	// Add 3 distinct events.
 	t0 := time.Now()
@@ -284,6 +284,33 @@ func TestStreamWithDedup_SkipsBadLog(t *testing.T) {
 	}
 }
 
+func TestStreamWithDedup_WrittenEventsCounter(t *testing.T) {
+	t0 := time.Now()
+	conn := &mockConnector{logs: []model.RawLog{
+		{Timestamp: t0, Source: "test", Raw: "event-a"},
+		{Timestamp: t0, Source: "test", Raw: "event-b"},
+		{Timestamp: t0, Source: "test", Raw: "event-c"},
+	}}
+	out := &mockOutput{}
+	proc := &categoryProcessor{}
+	d := dedup.New(dedup.Config{Window: time.Second})
+
+	p := New(conn, proc, out, WithDedup(d, 50*time.Millisecond))
+
+	err := p.Stream(context.Background(), connector.ConnectorConfig{})
+	if err != nil {
+		t.Fatalf("expected nil error (channel close), got: %v", err)
+	}
+
+	events := out.Events()
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+	if p.writtenEvents.Load() != 3 {
+		t.Errorf("expected writtenEvents=3, got %d", p.writtenEvents.Load())
+	}
+}
+
 func TestQuery_BatchFallback(t *testing.T) {
 	t0 := time.Now()
 	conn := &mockConnector{logs: []model.RawLog{
@@ -350,7 +377,7 @@ func TestSkipCounter(t *testing.T) {
 func TestStreamBuffer_MaxSizeFlush(t *testing.T) {
 	out := &mockOutput{}
 	d := dedup.New(dedup.Config{Window: time.Second})
-	buf := newStreamBuffer(d, out, 10*time.Second, 5) // long timer, maxSize=5
+	buf := newStreamBuffer(d, out, 10*time.Second, 5, nil) // long timer, maxSize=5
 
 	t0 := time.Now()
 	for i := 0; i < 4; i++ {
@@ -373,7 +400,7 @@ func TestStreamBuffer_MaxSizeFlush(t *testing.T) {
 func TestStreamBuffer_MaxSizeNoDataLoss(t *testing.T) {
 	out := &mockOutput{}
 	d := dedup.New(dedup.Config{Window: 10 * time.Second})
-	buf := newStreamBuffer(d, out, 10*time.Second, 3) // maxSize=3
+	buf := newStreamBuffer(d, out, 10*time.Second, 3, nil) // maxSize=3
 
 	t0 := time.Now()
 	// Add 3 distinct events — buffer full.
@@ -403,7 +430,7 @@ func TestStreamBuffer_MaxSizeNoDataLoss(t *testing.T) {
 func TestStreamBuffer_UnlimitedBackcompat(t *testing.T) {
 	out := &mockOutput{}
 	d := dedup.New(dedup.Config{Window: time.Second})
-	buf := newStreamBuffer(d, out, 10*time.Second, 0) // maxSize=0 → unlimited
+	buf := newStreamBuffer(d, out, 10*time.Second, 0, nil) // maxSize=0 → unlimited
 
 	t0 := time.Now()
 	for i := 0; i < 10000; i++ {

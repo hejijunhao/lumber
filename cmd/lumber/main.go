@@ -18,7 +18,12 @@ import (
 	"github.com/crimson-sun/lumber/internal/engine/embedder"
 	"github.com/crimson-sun/lumber/internal/engine/taxonomy"
 	"github.com/crimson-sun/lumber/internal/logging"
+	"github.com/crimson-sun/lumber/internal/output"
+	"github.com/crimson-sun/lumber/internal/output/async"
+	"github.com/crimson-sun/lumber/internal/output/file"
+	"github.com/crimson-sun/lumber/internal/output/multi"
 	"github.com/crimson-sun/lumber/internal/output/stdout"
+	"github.com/crimson-sun/lumber/internal/output/webhook"
 	"github.com/crimson-sun/lumber/internal/pipeline"
 
 	// Register connector implementations.
@@ -67,8 +72,36 @@ func main() {
 	// Initialize engine.
 	eng := engine.New(emb, tax, cls, cmp)
 
-	// Initialize output.
-	out := stdout.New(parseVerbosity(cfg.Engine.Verbosity), cfg.Output.Pretty)
+	// Initialize output(s).
+	verbosity := parseVerbosity(cfg.Engine.Verbosity)
+	var outputs []output.Output
+	outputs = append(outputs, stdout.New(verbosity, cfg.Output.Pretty))
+
+	if cfg.Output.FilePath != "" {
+		var fileOpts []file.Option
+		if cfg.Output.FileMaxSize > 0 {
+			fileOpts = append(fileOpts, file.WithMaxSize(cfg.Output.FileMaxSize))
+		}
+		f, err := file.New(cfg.Output.FilePath, verbosity, fileOpts...)
+		if err != nil {
+			slog.Error("failed to create file output", "error", err)
+			os.Exit(1)
+		}
+		outputs = append(outputs, async.New(f))
+		slog.Info("file output enabled", "path", cfg.Output.FilePath)
+	}
+
+	if cfg.Output.WebhookURL != "" {
+		var whOpts []webhook.Option
+		if cfg.Output.WebhookHeaders != nil {
+			whOpts = append(whOpts, webhook.WithHeaders(cfg.Output.WebhookHeaders))
+		}
+		wh := webhook.New(cfg.Output.WebhookURL, whOpts...)
+		outputs = append(outputs, async.New(wh, async.WithDropOnFull()))
+		slog.Info("webhook output enabled", "url", cfg.Output.WebhookURL)
+	}
+
+	out := multi.New(outputs...)
 
 	// Resolve connector.
 	ctor, err := connector.Get(cfg.Connector.Provider)

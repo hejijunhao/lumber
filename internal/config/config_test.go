@@ -464,3 +464,65 @@ func TestValidate_ParseErrors(t *testing.T) {
 		t.Fatalf("expected error to mention parse error, got: %v", err)
 	}
 }
+
+// --- output config tests ---
+
+func TestValidate_WebhookURLInvalid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Output.WebhookURL = "not-a-url"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid webhook URL")
+	}
+	if !strings.Contains(err.Error(), "webhook URL") {
+		t.Fatalf("expected error to mention 'webhook URL', got: %v", err)
+	}
+}
+
+func TestValidate_WebhookURLValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Output.WebhookURL = "https://hooks.example.com/lumber"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for valid webhook URL, got: %v", err)
+	}
+}
+
+func TestValidate_FileOutputBadDir(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Output.FilePath = "/nonexistent/dir/output.jsonl"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for non-existent file output directory")
+	}
+	if !strings.Contains(err.Error(), "output file directory") {
+		t.Fatalf("expected error to mention 'output file directory', got: %v", err)
+	}
+}
+
+func TestValidate_FileOutputValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Output.FilePath = filepath.Join(t.TempDir(), "output.jsonl")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for valid file output, got: %v", err)
+	}
+}
+
+func TestLoad_OutputFileEnv(t *testing.T) {
+	os.Setenv("LUMBER_OUTPUT_FILE", "/tmp/lumber.jsonl")
+	defer os.Unsetenv("LUMBER_OUTPUT_FILE")
+
+	cfg := Load()
+	if cfg.Output.FilePath != "/tmp/lumber.jsonl" {
+		t.Fatalf("expected FilePath=/tmp/lumber.jsonl, got %q", cfg.Output.FilePath)
+	}
+}
+
+func TestLoad_WebhookURLEnv(t *testing.T) {
+	os.Setenv("LUMBER_WEBHOOK_URL", "https://hooks.example.com")
+	defer os.Unsetenv("LUMBER_WEBHOOK_URL")
+
+	cfg := Load()
+	if cfg.Output.WebhookURL != "https://hooks.example.com" {
+		t.Fatalf("expected WebhookURL=https://hooks.example.com, got %q", cfg.Output.WebhookURL)
+	}
+}

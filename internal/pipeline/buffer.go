@@ -16,18 +16,20 @@ type streamBuffer struct {
 	out     output.Output
 	window  time.Duration
 	maxSize int // 0 means unlimited (backward compat)
+	onWrite func() // called after each successful Write
 
 	mu      sync.Mutex
 	pending []model.CanonicalEvent
 	timer   *time.Timer
 }
 
-func newStreamBuffer(d *dedup.Deduplicator, out output.Output, window time.Duration, maxSize int) *streamBuffer {
+func newStreamBuffer(d *dedup.Deduplicator, out output.Output, window time.Duration, maxSize int, onWrite func()) *streamBuffer {
 	return &streamBuffer{
 		dedup:   d,
 		out:     out,
 		window:  window,
 		maxSize: maxSize,
+		onWrite: onWrite,
 	}
 }
 
@@ -74,6 +76,9 @@ func (b *streamBuffer) flush(ctx context.Context) error {
 	for _, e := range deduped {
 		if err := b.out.Write(ctx, e); err != nil {
 			return err
+		}
+		if b.onWrite != nil {
+			b.onWrite()
 		}
 	}
 	return nil

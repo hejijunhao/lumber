@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.6.0](#060--2026-02-28) — Output architecture & public library API: multi-output fan-out, async wrapper, file/webhook backends, `pkg/lumber` importable API
 - [0.5.1](#051--2026-02-24) — Post-review fixes: version stdout, timer leak, query validation, corpus test visibility, batch embed filtering
 - [0.5.0](#050--2026-02-23) — Pipeline integration & resilience: structured logging, config validation, per-log error handling, graceful shutdown, CLI flags
 - [0.4.1](#041--2026-02-23) — Post-review fixes: stack trace truncation, Go interleaving, test correctness
@@ -15,6 +16,111 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.6.0 — 2026-02-28
+
+**Output architecture & public library API (Phases 7 + 8)**
+
+Two phases implemented together — Phase 7 transforms the output layer from a single synchronous stdout pipe into a multi-destination async fan-out system; Phase 8 exposes `pkg/lumber` so any Go application can `go get` Lumber and classify logs without running a subprocess.
+
+### Added
+
+- **Multi-output router** — `internal/output/multi/` fans out each `Write()` call to N outputs sequentially. Error isolation via `errors.Join`: one output failing doesn't prevent delivery to others. `Close()` collects errors from all outputs.
+- **Async output wrapper** — `internal/output/async/` decouples production from consumption via a buffered channel (default 1024). Two modes: backpressure (default, blocks when full) and drop-on-full (lossy, for non-critical outputs like webhooks). `Close()` is idempotent via `sync.Once`; drains remaining events with a 5s timeout. Errors from the inner output routed to a configurable `errFunc` callback.
+- **File output backend** — `internal/output/file/` writes NDJSON with `bufio.Writer` (64KB buffer, reduces syscalls from 1-per-event to ~1-per-64KB). Size-based rotation: when file exceeds `maxSize`, renames to `.1` (shifting existing `.1`→`.2`→...`.9`→`.10`), opens new file. Thread-safe via `sync.Mutex`. Verbosity-aware via `output.FormatEvent()`.
+- **Webhook output backend** — `internal/output/webhook/` POSTs batched events as a JSON array. Timer+buffer pattern: `time.AfterFunc` starts on first event, flushes when batch fills (default 50) or timer fires (default 5s). Retry on 5xx with exponential backoff (1s, 2s, 4s, max 3 retries); no retry on 4xx. Custom headers via `WithHeaders()`. Timer-flush errors routed through `errFunc` callback.
+- **Public library API** — `pkg/lumber/`:
+  - `New(opts ...Option)` loads ONNX model, pre-embeds taxonomy, builds engine (~100-300ms, create once)
+  - `Classify(text)` classifies a single log line → `Event`
+  - `ClassifyBatch(texts)` batched inference for multiple lines
+  - `ClassifyLog(log)` / `ClassifyLogs(logs)` for structured input with timestamp/source/metadata
+  - `Taxonomy()` returns `[]Category` with `[]Label` for read-only introspection
+  - `Close()` releases ONNX resources
+  - `Event` type: stable public contract separate from `model.CanonicalEvent`
+  - `Log` type: structured input with `Text`, `Timestamp`, `Source`, `Metadata`
+  - `Option` funcs: `WithModelDir`, `WithModelPaths`, `WithConfidenceThreshold`, `WithVerbosity`
+  - Safe for concurrent use
+- **Config extensions** — `OutputConfig` gains `FilePath`, `FileMaxSize`, `WebhookURL`, `WebhookHeaders`. Validation: webhook URL must start with `http://` or `https://`; file output parent directory must exist.
+- **Pipeline event counter** — `writtenEvents atomic.Int64` incremented after each successful `output.Write()` in all three paths (direct stream, dedup stream via `onWrite` callback, query). `Close()` logs both `total_events_written` and `total_skipped_logs`.
+- **Package documentation** — `pkg/lumber/doc.go` with godoc quick-start, `example_test.go` with runnable `Example()` (ONNX-gated with fallback output).
+
+### Changed
+
+- `cmd/lumber/main.go` — builds `[]output.Output` from config: stdout (sync) + file (async) + webhook (async+drop), combined via `multi.New()`. Passes verbosity to file output.
+- `internal/pipeline/pipeline.go` — added `writtenEvents` counter, updated `Close()` to log both counters
+- `internal/pipeline/buffer.go` — added `onWrite func()` callback to `streamBuffer`, invoked after each successful write in `flush()`
+
+### Design decisions
+
+- **Sequential fan-out over parallel.** `multi.Write()` calls outputs sequentially. stdout and file writes are microseconds; parallel goroutines would add overhead for no gain. The `async` wrapper handles truly slow outputs.
+- **Backpressure as default, drop-on-full as opt-in.** Safe by default. Lossy mode explicitly opted into for outputs where data loss is acceptable.
+- **Separate public types from internal types.** `lumber.Event` mirrors `model.CanonicalEvent` today but can diverge. The `eventFromCanonical()` bridge function is the single divergence point.
+- **`errors.Join` for multi-error collection.** Go 1.20+ stdlib, returns nil when all errors are nil, supports `errors.Is`/`errors.As` unwrapping.
+- **`time.AfterFunc` for webhook batching.** Cleaner than manual timer management since the webhook doesn't have its own event loop.
+- **`bufio.Writer` for file output.** 64KB buffer reduces syscalls from 1000/s to ~1/64KB at 1000 events/sec.
+- **Callback-based error routing.** Both `async.Async` and `webhook.Output` use `errFunc func(error)` callbacks for errors from background goroutines, avoiding complex error channels.
+
+### New environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LUMBER_OUTPUT_FILE` | `` | File path for NDJSON output (empty = disabled) |
+| `LUMBER_OUTPUT_FILE_MAX_SIZE` | `0` | Max file size before rotation (bytes, 0 = no rotation) |
+| `LUMBER_WEBHOOK_URL` | `` | Webhook endpoint URL (empty = disabled) |
+
+### New CLI flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `-output-file` | string | File path for NDJSON output |
+| `-webhook-url` | string | Webhook POST endpoint |
+
+### Tests added
+
+49 new tests across 7 packages:
+
+| Package | Tests | What |
+|---------|-------|------|
+| `internal/output/multi` | 5 | Fan-out, error isolation, close propagation, single-output identity |
+| `internal/output/async` | 7 | Flow-through, backpressure, drop-on-full, close drain, error callback, goroutine leak, close idempotency |
+| `internal/output/file` | 5 | Valid NDJSON, rotation at maxSize, close flush, verbosity filtering, concurrent safety |
+| `internal/output/webhook` | 7 | Batch flush, timer flush, 5xx retry, 4xx no-retry, custom headers, timer error callback, close flush |
+| `internal/config` | 6 | Webhook URL valid/invalid, file dir valid/invalid, env var loading (2) |
+| `internal/pipeline` | 1 | Dedup path writtenEvents counter |
+| `pkg/lumber` | 18 | Construction (2), classification (4), empty/whitespace (2), concurrent safety, options/paths (4), metadata (3), taxonomy (3) |
+
+### Files changed
+
+| File | Action |
+|------|--------|
+| `internal/output/multi/multi.go` | **new** |
+| `internal/output/multi/multi_test.go` | **new** |
+| `internal/output/async/async.go` | **new** |
+| `internal/output/async/async_test.go` | **new** |
+| `internal/output/file/file.go` | **new** |
+| `internal/output/file/file_test.go` | **new** |
+| `internal/output/webhook/webhook.go` | **new** |
+| `internal/output/webhook/webhook_test.go` | **new** |
+| `pkg/lumber/event.go` | **new** |
+| `pkg/lumber/options.go` | **new** |
+| `pkg/lumber/lumber.go` | **new** |
+| `pkg/lumber/lumber_test.go` | **new** |
+| `pkg/lumber/log.go` | **new** |
+| `pkg/lumber/taxonomy.go` | **new** |
+| `pkg/lumber/taxonomy_test.go` | **new** |
+| `pkg/lumber/doc.go` | **new** |
+| `pkg/lumber/example_test.go` | **new** |
+| `internal/config/config.go` | modified |
+| `internal/config/config_test.go` | modified |
+| `internal/pipeline/pipeline.go` | modified |
+| `internal/pipeline/pipeline_test.go` | modified |
+| `internal/pipeline/buffer.go` | modified |
+| `cmd/lumber/main.go` | modified |
+| `README.md` | modified |
+
+**New files: 17. Modified files: 7. Total: 24.**
 
 ---
 
