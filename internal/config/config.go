@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 // Version is the current Lumber release version.
 // Set at build time via: go build -ldflags "-X github.com/kaminocorp/lumber/internal/config.Version=X.Y.Z"
-var Version = "0.9.1"
+var Version = "0.10.1"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -64,7 +65,7 @@ func Load() Config {
 		ShutdownTimeout: getenvDuration("LUMBER_SHUTDOWN_TIMEOUT", 10*time.Second),
 		Mode:            getenv("LUMBER_MODE", "stream"),
 		Connector: ConnectorConfig{
-			Provider: getenv("LUMBER_CONNECTOR", "vercel"),
+			Provider: getenv("LUMBER_CONNECTOR", ""),
 			APIKey:   os.Getenv("LUMBER_API_KEY"),
 			Endpoint: os.Getenv("LUMBER_ENDPOINT"),
 			Extra:    loadConnectorExtra(),
@@ -95,7 +96,8 @@ func LoadWithFlags() Config {
 
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	mode := flag.String("mode", "", "Pipeline mode: stream or query")
-	connFlag := flag.String("connector", "", "Connector: vercel, flyio, supabase")
+	connFlag := flag.String("connector", "", "Connector: vercel, flyio, supabase, stdin, file")
+	fileInput := flag.String("file", "", "Log file path (for file connector)")
 	from := flag.String("from", "", "Query start time (RFC3339)")
 	to := flag.String("to", "", "Query end time (RFC3339)")
 	limit := flag.Int("limit", 0, "Query result limit")
@@ -109,19 +111,20 @@ func LoadWithFlags() Config {
 		fmt.Fprintf(os.Stderr, `lumber %s — log normalization pipeline
 
 Usage:
-  lumber [flags]
-
-Modes:
-  lumber                              Stream logs (default)
-  lumber -mode query -from T -to T    Query historical logs
+  lumber                                Interactive setup wizard
+  lumber -connector stdin               Classify piped logs
+  lumber -connector file -file PATH     Classify a log file
+  lumber -connector vercel              Stream from Vercel (requires LUMBER_API_KEY)
+  cat app.log | lumber                  Auto-detect piped input
 
 Flags:
 `, Version)
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
 Environment variables:
-  LUMBER_CONNECTOR      Log provider (vercel, flyio, supabase)
-  LUMBER_API_KEY        Provider API key/token
+  LUMBER_CONNECTOR      Log provider (vercel, flyio, supabase, stdin, file)
+  LUMBER_API_KEY        Provider API key/token (cloud connectors only)
+  LUMBER_FILE_PATH      Log file path (file connector)
   LUMBER_VERBOSITY      Output verbosity (minimal, standard, full)
   LUMBER_DEDUP_WINDOW   Dedup window duration (e.g. 5s, 0 to disable)
   LUMBER_LOG_LEVEL      Internal log level (debug, info, warn, error)
@@ -141,6 +144,11 @@ Environment variables:
 			cfg.Mode = *mode
 		case "connector":
 			cfg.Connector.Provider = *connFlag
+		case "file":
+			if cfg.Connector.Extra == nil {
+				cfg.Connector.Extra = make(map[string]string)
+			}
+			cfg.Connector.Extra["file"] = *fileInput
 		case "verbosity":
 			cfg.Engine.Verbosity = *verbosity
 		case "pretty":
@@ -175,9 +183,20 @@ Environment variables:
 func (c Config) Validate() error {
 	var errs []string
 
-	// API key required when provider is set.
-	if c.Connector.Provider != "" && c.Connector.APIKey == "" {
-		errs = append(errs, "LUMBER_API_KEY is required when a connector is configured")
+	// API key required for cloud connectors only.
+	localConnectors := map[string]bool{"stdin": true, "file": true, "": true}
+	if c.Connector.Provider != "" && c.Connector.APIKey == "" && !localConnectors[c.Connector.Provider] {
+		errs = append(errs, "LUMBER_API_KEY is required for cloud connectors")
+	}
+
+	// File connector requires a valid file path.
+	if c.Connector.Provider == "file" {
+		filePath := c.Connector.Extra["file"]
+		if filePath == "" {
+			errs = append(errs, "file path is required for file connector (-file flag or LUMBER_FILE_PATH)")
+		} else if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			errs = append(errs, fmt.Sprintf("log file not found: %s", filePath))
+		}
 	}
 
 	// Model files must exist on disk.
@@ -237,8 +256,8 @@ func (c Config) Validate() error {
 
 	// File output parent directory must exist if set.
 	if c.Output.FilePath != "" {
-		dir := c.Output.FilePath[:max(strings.LastIndex(c.Output.FilePath, "/"), 0)]
-		if dir != "" {
+		dir := filepath.Dir(c.Output.FilePath)
+		if dir != "." && dir != "" {
 			if _, err := os.Stat(dir); os.IsNotExist(err) {
 				errs = append(errs, fmt.Sprintf("output file directory does not exist: %s", dir))
 			}
@@ -270,6 +289,7 @@ func loadConnectorExtra() map[string]string {
 		{"LUMBER_SUPABASE_PROJECT_REF", "project_ref"},
 		{"LUMBER_SUPABASE_TABLES", "tables"},
 		{"LUMBER_POLL_INTERVAL", "poll_interval"},
+		{"LUMBER_FILE_PATH", "file"},
 	}
 
 	var m map[string]string

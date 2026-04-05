@@ -15,6 +15,7 @@ func TestLoad_Defaults(t *testing.T) {
 		"LUMBER_VERCEL_PROJECT_ID", "LUMBER_VERCEL_TEAM_ID",
 		"LUMBER_FLY_APP_NAME", "LUMBER_SUPABASE_PROJECT_REF",
 		"LUMBER_SUPABASE_TABLES", "LUMBER_POLL_INTERVAL",
+		"LUMBER_FILE_PATH",
 		"LUMBER_OUTPUT_PRETTY", "LUMBER_DEDUP_WINDOW",
 	} {
 		os.Unsetenv(key)
@@ -22,8 +23,8 @@ func TestLoad_Defaults(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.Connector.Provider != "vercel" {
-		t.Fatalf("expected default provider 'vercel', got %q", cfg.Connector.Provider)
+	if cfg.Connector.Provider != "" {
+		t.Fatalf("expected default provider '' (empty, triggers wizard), got %q", cfg.Connector.Provider)
 	}
 	if cfg.Connector.APIKey != "" {
 		t.Fatalf("expected empty APIKey, got %q", cfg.Connector.APIKey)
@@ -47,7 +48,7 @@ func TestLoad_ConnectorExtra(t *testing.T) {
 	for _, key := range []string{
 		"LUMBER_VERCEL_TEAM_ID", "LUMBER_FLY_APP_NAME",
 		"LUMBER_SUPABASE_PROJECT_REF", "LUMBER_SUPABASE_TABLES",
-		"LUMBER_POLL_INTERVAL",
+		"LUMBER_POLL_INTERVAL", "LUMBER_FILE_PATH",
 	} {
 		os.Unsetenv(key)
 	}
@@ -75,6 +76,7 @@ func TestLoad_EmptyExtraOmitted(t *testing.T) {
 	for _, key := range []string{
 		"LUMBER_VERCEL_TEAM_ID", "LUMBER_SUPABASE_PROJECT_REF",
 		"LUMBER_SUPABASE_TABLES", "LUMBER_POLL_INTERVAL",
+		"LUMBER_FILE_PATH",
 	} {
 		os.Unsetenv(key)
 	}
@@ -93,6 +95,7 @@ func TestLoad_MultipleProviders(t *testing.T) {
 	os.Setenv("LUMBER_SUPABASE_PROJECT_REF", "ref_s")
 	os.Setenv("LUMBER_SUPABASE_TABLES", "edge_logs,auth_logs")
 	os.Setenv("LUMBER_POLL_INTERVAL", "10s")
+	os.Unsetenv("LUMBER_FILE_PATH") // clear to avoid interference
 	defer func() {
 		for _, key := range []string{
 			"LUMBER_VERCEL_PROJECT_ID", "LUMBER_VERCEL_TEAM_ID",
@@ -256,7 +259,7 @@ func TestValidate_MissingAPIKey(t *testing.T) {
 	cfg.Connector.APIKey = ""
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("expected error for missing API key with provider set")
+		t.Fatal("expected error for missing API key with cloud provider set")
 	}
 	if !strings.Contains(err.Error(), "LUMBER_API_KEY") {
 		t.Fatalf("expected error to mention 'LUMBER_API_KEY', got: %v", err)
@@ -524,5 +527,103 @@ func TestLoad_WebhookURLEnv(t *testing.T) {
 	cfg := Load()
 	if cfg.Output.WebhookURL != "https://hooks.example.com" {
 		t.Fatalf("expected WebhookURL=https://hooks.example.com, got %q", cfg.Output.WebhookURL)
+	}
+}
+
+// --- Section 5: local connector validation tests ---
+
+func TestValidate_StdinSkipsAPIKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.Provider = "stdin"
+	cfg.Connector.APIKey = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for stdin without API key, got: %v", err)
+	}
+}
+
+func TestValidate_FileConnectorRequiresFilePath(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.Provider = "file"
+	cfg.Connector.APIKey = ""
+	cfg.Connector.Extra = map[string]string{}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for file connector without file path")
+	}
+	if !strings.Contains(err.Error(), "file path is required") {
+		t.Fatalf("expected error to mention 'file path is required', got: %v", err)
+	}
+}
+
+func TestValidate_FileConnectorValidatesFileExists(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.Provider = "file"
+	cfg.Connector.APIKey = ""
+	cfg.Connector.Extra = map[string]string{"file": "/nonexistent/app.log"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for file connector with nonexistent file")
+	}
+	if !strings.Contains(err.Error(), "log file not found") {
+		t.Fatalf("expected error to mention 'log file not found', got: %v", err)
+	}
+}
+
+func TestValidate_FileConnectorValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.Provider = "file"
+	cfg.Connector.APIKey = ""
+
+	// Create a temp log file.
+	logFile := filepath.Join(t.TempDir(), "app.log")
+	os.WriteFile(logFile, []byte("test log line"), 0o644)
+	cfg.Connector.Extra = map[string]string{"file": logFile}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for valid file connector, got: %v", err)
+	}
+}
+
+func TestValidate_CloudConnectorStillRequiresAPIKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.Provider = "vercel"
+	cfg.Connector.APIKey = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for cloud connector without API key")
+	}
+	if !strings.Contains(err.Error(), "LUMBER_API_KEY") {
+		t.Fatalf("expected error to mention 'LUMBER_API_KEY', got: %v", err)
+	}
+}
+
+func TestValidate_EmptyProviderSkipsAPIKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Connector.Provider = ""
+	cfg.Connector.APIKey = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for empty provider without API key, got: %v", err)
+	}
+}
+
+func TestLoad_FilePathEnv(t *testing.T) {
+	os.Setenv("LUMBER_FILE_PATH", "/var/log/app.log")
+	defer os.Unsetenv("LUMBER_FILE_PATH")
+
+	// Clear other extra vars to isolate.
+	for _, key := range []string{
+		"LUMBER_VERCEL_PROJECT_ID", "LUMBER_VERCEL_TEAM_ID",
+		"LUMBER_FLY_APP_NAME", "LUMBER_SUPABASE_PROJECT_REF",
+		"LUMBER_SUPABASE_TABLES", "LUMBER_POLL_INTERVAL",
+	} {
+		os.Unsetenv(key)
+	}
+
+	cfg := Load()
+	if cfg.Connector.Extra == nil {
+		t.Fatal("expected non-nil Extra with LUMBER_FILE_PATH set")
+	}
+	if cfg.Connector.Extra["file"] != "/var/log/app.log" {
+		t.Fatalf("expected Extra[\"file\"]=/var/log/app.log, got %q", cfg.Connector.Extra["file"])
 	}
 }

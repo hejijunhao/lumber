@@ -1,71 +1,27 @@
 # Phase 9.5: Library Bootstrap & Versioning
 
-**Goal:** Make Lumber usable as a Go library dependency without manual model setup. After this phase: `go get github.com/kaminocorp/lumber` + `lumber.New(lumber.WithAutoDownload())` works out of the box — model files are fetched on first use, cached locally, and reused across runs. Proper semver tags give consumers a stable versioning contract.
+**Completed:** 2026-04-02
 
-**Scope:** This phase targets the **library embedding path only** (`pkg/lumber` imported via `go get`). The standalone CLI binary is already solved — Phase 9 release tarballs bundle all model files and the ONNX Runtime library, and `make download-model` handles the build-from-source path. The problem addressed here is specific to Go applications that `import "github.com/kaminocorp/lumber/pkg/lumber"` and call `lumber.New()` programmatically.
+**Scope:** Implemented auto-download for model files and ONNX Runtime when Lumber is used as a Go library dependency. After this phase: `go get github.com/kaminocorp/lumber` + `lumber.New(lumber.WithAutoDownload())` works out of the box — model files are fetched on first use, cached locally, and reused across runs. Version bumped to 0.9.0 for semver tagging.
 
-**Why the CLI doesn't have this problem:** `go get` only fetches Go source code. Unlike `pip` (Python) or `build.rs` (Rust), Go modules have no post-install hooks and no mechanism for bundling binary assets. So while the CLI user gets a self-contained tarball with everything included, the library consumer gets Go code with no model files and no ONNX Runtime — they must acquire those through out-of-band steps.
-
-**Starting point:** Phase 9 (distribution) shipped release tarballs for the standalone binary. The public library API (`pkg/lumber`) works, but requires consumers to pre-download ~25MB of model files and the ONNX Runtime shared library through out-of-band steps (Dockerfile curl stages, manual download, or copying from the Lumber repo's Makefile). Every new consumer rediscovers and replicates this setup. The repo has no git tags — Go generates pseudo-versions from commit hashes.
-
-**Problem observed in practice:** Heimdall (an internal consumer) integrated Lumber by pinning to a pseudo-version (`v0.0.0-20260304033652-4f6b6e878057`) and manually curling 6 model files + the ORT library in a Dockerfile build stage. This works in Docker but breaks in local dev (no model files → `New()` returns an error, forcing the consumer to implement their own fallback/passthrough logic). Every future library consumer would face the same onboarding friction.
+**Plan:** `docs/executing/phase-9.5-library-bootstrap.md`
 
 ---
 
-## What Changes and Why
+## What Was Done
 
-### Current gaps (library path only — CLI/binary path is solved by Phase 9)
-
-1. **No model self-bootstrap** — `lumber.New()` expects pre-existing model files on disk. There is no programmatic way to acquire them. Every library integrator must copy download logic from the Makefile or invent their own (as Heimdall did in its Dockerfile). The CLI binary path doesn't have this problem — `make download-model` and release tarballs handle it.
-2. **No standard cache location** — Each library consumer chooses where to put model files (`/opt/lumber/models`, `./models`, etc.). No convention, no shared cache across applications on the same machine.
-3. **No ONNX Runtime self-bootstrap** — The shared library (`libonnxruntime.so`/`.dylib`) must also be pre-installed by the library consumer. The CLI release tarballs bundle it; library consumers are on their own.
-4. **No semver tags** — Consumers pin to opaque commit hashes via pseudo-versions. No stability contract, no changelog anchoring, no `go get github.com/kaminocorp/lumber@v0.9.0`. This affects both CLI (build-from-source) and library consumers.
-5. **No graceful degradation option** — If model files are missing, `New()` fails hard. There's no way for a library consumer to say "classify if you can, pass through if you can't" without wrapping Lumber in their own fallback layer.
-
-### Design constraints
-
-- Download must be **opt-in**, not default. `lumber.New(lumber.WithModelDir("./models"))` must continue to work exactly as today for consumers who manage their own files. Auto-download only activates with an explicit option.
-- Downloads happen **once** per cache directory. Subsequent calls skip download if files exist and checksums match.
-- Must work behind corporate proxies (standard `HTTP_PROXY`/`HTTPS_PROXY` env vars via Go's default `http.Transport`).
-- Must not add heavy dependencies. `net/http` + `os` + `crypto/sha256` from stdlib are sufficient.
-- ONNX Runtime download is **separate** from model download — they come from different sources (HuggingFace vs Microsoft GitHub Releases) and have different platform concerns.
-- Cache directory follows OS conventions: `$XDG_CACHE_HOME/lumber` on Linux, `~/Library/Caches/lumber` on macOS, `%LOCALAPPDATA%\lumber` on Windows. Fallback: `~/.cache/lumber`.
-
-### What auto-download fetches
-
-| File | Source | Size | Purpose |
-|------|--------|------|---------|
-| `model_quantized.onnx` | HuggingFace `MongoDB/mdbr-leaf-mt` | ~23MB | ONNX model |
-| `model_quantized.onnx_data` | HuggingFace `MongoDB/mdbr-leaf-mt` | ~1MB | External tensor data |
-| `vocab.txt` | HuggingFace `MongoDB/mdbr-leaf-mt` | ~230KB | WordPiece vocabulary |
-| `2_Dense/model.safetensors` | HuggingFace `MongoDB/mdbr-leaf-mt` | ~1.6MB | Projection layer weights |
-| `2_Dense/config.json` | HuggingFace `MongoDB/mdbr-leaf-mt` | <1KB | Projection config |
-| `libonnxruntime.{so,dylib}` | Microsoft GitHub Releases | ~8-35MB | ONNX Runtime shared library |
-
-Total first-download: ~35-60MB depending on platform. Cached after first run.
-
----
-
-## Implementation Plan
-
-### Section 1: Cache Directory Resolution
+### 1. Cache Directory Resolution
 
 **New file:** `pkg/lumber/cache.go`
 
-Determine the platform-appropriate cache directory for model files. This is a pure utility — no downloads, no I/O.
+**Problem:** Library consumers need a standard, predictable location for cached model files. Without a convention, every consumer invents their own path (`/opt/lumber/models`, `./models`, etc.), with no shared cache across applications.
 
-```go
-// defaultCacheDir returns the platform-appropriate cache directory.
-// Precedence: $LUMBER_CACHE_DIR > OS-specific cache dir > ~/.cache/lumber
-func defaultCacheDir() (string, error)
-```
+**Implementation:** Single function `defaultCacheDir()` with a two-level resolution chain:
 
-Resolution order:
-1. `$LUMBER_CACHE_DIR` environment variable (explicit override)
-2. `os.UserCacheDir()` + `/lumber` (Go stdlib, returns `~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux)
-3. Error if home directory cannot be determined
+1. `$LUMBER_CACHE_DIR` environment variable — explicit override for CI, Docker, or custom layouts
+2. `os.UserCacheDir()` + `/lumber` — Go stdlib, returns `~/Library/Caches/lumber` on macOS, `$XDG_CACHE_HOME/lumber` or `~/.cache/lumber` on Linux
 
-The cache layout mirrors the existing model directory structure:
+Cache layout mirrors the existing model directory structure that `resolvePaths()` expects:
 
 ```
 ~/.cache/lumber/
@@ -78,270 +34,260 @@ The cache layout mirrors the existing model directory structure:
 └── libonnxruntime.{so,dylib}
 ```
 
-**Files:**
-
-| File | Action |
-|------|--------|
-| `pkg/lumber/cache.go` | new |
+**Why `os.UserCacheDir()` not `os.UserConfigDir()`:** Model files are a cache (derivable, re-downloadable), not configuration. Cache dirs can be wiped without data loss, which matches the semantics — next `New()` call simply re-downloads.
 
 ---
 
-### Section 2: Model Downloader
+### 2. Model + ORT Downloader
 
 **New file:** `pkg/lumber/download.go`
 
-Downloads model files from HuggingFace and the ONNX Runtime library from Microsoft's GitHub Releases. Designed to be called once — checks for existing files before downloading.
+**Problem:** `go get` only fetches Go source. Unlike `pip` (Python) or `build.rs` (Rust), Go modules have no post-install hooks. Library consumers must acquire ~35-60MB of binary assets (ONNX model + runtime) through out-of-band steps. Every new consumer rediscovers and replicates this setup.
 
-```go
-// downloadModels downloads model files to destDir if they don't already exist.
-// Uses SHA256 checksums embedded in the binary to verify integrity.
-// Returns nil if all files already exist and pass checksum verification.
-func downloadModels(destDir string) error
+**Implementation:** Two top-level functions:
 
-// downloadORT downloads the platform-specific ONNX Runtime library to destDir
-// if it doesn't already exist.
-func downloadORT(destDir string) error
-```
+#### `downloadModels(destDir string) error`
 
-**Download behavior:**
-- Check if each file exists and matches expected SHA256 checksum
-- If all files present and valid, return immediately (no network calls)
-- If any file missing or corrupt, download all missing files
-- Write to `<destDir>/.tmp-<random>` first, then atomic rename to final path (prevents partial files from being used if download is interrupted)
-- Use `net/http.DefaultClient` (inherits proxy settings from environment)
-- Log progress via `log/slog` (the same structured logger Lumber already uses)
+Downloads 5 model files from HuggingFace (`MongoDB/mdbr-leaf-mt`):
 
-**Checksum verification:**
-- SHA256 checksums for the current model version are embedded as constants in `download.go`
-- Checksums are verified after download and on subsequent cache hits
-- If a cached file fails checksum (corrupt or stale), re-download it
+| File | Size | SHA256 (first 16 chars) |
+|------|------|------------------------|
+| `model_quantized.onnx` | ~220KB (stub, data in separate file) | `2a3541f3f156bc42...` |
+| `model_quantized.onnx_data` | ~23MB | `65dc11dae54946d5...` |
+| `vocab.txt` | ~230KB | `07eced375cec144d...` |
+| `2_Dense/model.safetensors` | ~1.6MB | `dfe95933b7511...` |
+| `2_Dense/config.json` | <1KB | `5d4010b4ce5194...` |
 
-**ORT platform detection reuses the same logic as the Makefile:**
+For each file:
+1. Check if file exists and SHA256 matches → skip (no network call)
+2. If missing or corrupt → download via `net/http.Get` (inherits `HTTP_PROXY`/`HTTPS_PROXY`)
+3. Write to temp file (`.lumber-download-*`) in same directory
+4. Compute SHA256 while writing via `io.MultiWriter(file, hasher)` — single-pass, no re-read
+5. Verify checksum → atomic `os.Rename` to final path
 
-| `runtime.GOOS` + `runtime.GOARCH` | ORT Archive | Installed As |
-|------------------------------------|-------------|-------------|
-| `linux` + `amd64` | `onnxruntime-linux-x64-{version}.tgz` | `libonnxruntime.so` |
-| `linux` + `arm64` | `onnxruntime-linux-aarch64-{version}.tgz` | `libonnxruntime.so` |
-| `darwin` + `arm64` | `onnxruntime-osx-arm64-{version}.tgz` | `libonnxruntime.dylib` |
+SHA256 checksums are embedded as constants in the `modelFiles` slice. Sourced from HuggingFace's `paths-info` API (LFS files) and direct download + `shasum` (non-LFS files).
 
-Unsupported platforms return a clear error: `"lumber: auto-download not supported on {GOOS}/{GOARCH} — use WithModelDir() with manually downloaded files"`.
+#### `downloadORT(destDir string) error`
 
-**Error handling:** All download errors are wrapped with context (`fmt.Errorf("lumber: downloading %s: %w", filename, err)`). Network errors, HTTP non-200 responses, checksum mismatches, and disk write failures all surface as actionable error messages.
+Downloads the platform-specific ONNX Runtime shared library from Microsoft's GitHub Releases.
 
-**Files:**
+Platform detection via `runtime.GOOS` + `runtime.GOARCH`:
 
-| File | Action |
-|------|--------|
-| `pkg/lumber/download.go` | new |
-| `pkg/lumber/download_test.go` | new |
+| Platform | Archive | Installed as |
+|----------|---------|-------------|
+| `linux-amd64` | `onnxruntime-linux-x64-1.24.1.tgz` | `libonnxruntime.so` |
+| `linux-arm64` | `onnxruntime-linux-aarch64-1.24.1.tgz` | `libonnxruntime.so` |
+| `darwin-arm64` | `onnxruntime-osx-arm64-1.24.1.tgz` | `libonnxruntime.dylib` |
 
----
+Unsupported platforms get a clear error: `"auto-download not supported on {GOOS}/{GOARCH} — use WithModelDir() with manually downloaded files"`.
 
-### Section 3: New Options for `pkg/lumber`
+**ORT extraction logic (`downloadAndExtractORT`):** The ORT `.tgz` archive contains headers, static libs, and other files we don't need. Extraction streams the response body through `gzip.NewReader` → `tar.NewReader` and selectively extracts only the versioned shared library by matching:
+- Path prefix `{archiveName}/lib/`
+- Filename prefix `libonnxruntime`
+- Not a symlink or directory
+- File size > 1MB (the real library is 8-35MB; skips small metadata files)
 
-**File:** `pkg/lumber/options.go`
+The extracted library is written via `atomicWriteFromReader` — temp file + rename pattern, same as model files.
 
-Add two new options to the public API:
+**Why separate from model download:** Model files come from HuggingFace, ORT comes from Microsoft GitHub Releases. Different sources, different archive formats (raw files vs `.tgz`), different platform concerns (models are platform-agnostic, ORT is per-OS/arch).
 
-```go
-// WithAutoDownload enables automatic model and ONNX Runtime download.
-// On first call, downloads ~35-60MB of files to the OS cache directory
-// (or the directory specified by WithCacheDir). Subsequent calls reuse
-// the cached files. Requires network access on first run only.
-func WithAutoDownload() Option
-
-// WithCacheDir overrides the default cache directory for auto-downloaded files.
-// Only relevant when WithAutoDownload is used. Default: ~/.cache/lumber (Linux),
-// ~/Library/Caches/lumber (macOS).
-func WithCacheDir(dir string) Option
-```
-
-**Interaction with existing options:**
-- `WithAutoDownload()` alone → download to default cache dir, use cached files
-- `WithAutoDownload()` + `WithCacheDir("/tmp/lumber")` → download to custom dir
-- `WithModelDir("./models")` alone → use pre-existing files (existing behavior, unchanged)
-- `WithModelDir("./models")` + `WithAutoDownload()` → `WithModelDir` takes precedence, no download (explicit path wins over auto)
-- `WithModelPaths(...)` + `WithAutoDownload()` → `WithModelPaths` takes precedence, no download
-
-The precedence chain: `WithModelPaths` > `WithModelDir` > `WithAutoDownload` > error ("no model files found").
-
-**Files:**
-
-| File | Action |
-|------|--------|
-| `pkg/lumber/options.go` | modified — add `WithAutoDownload`, `WithCacheDir`, update `options` struct |
+**Concurrency safety:** Multiple goroutines or processes calling `New(WithAutoDownload())` simultaneously race harmlessly. The temp-file + atomic-rename pattern means only complete files are ever visible at the final path. Worst case: two processes download the same file, but the last `Rename` wins with a valid copy.
 
 ---
 
-### Section 4: Wire Auto-Download into `New()`
+### 3. New Public API Options
 
-**File:** `pkg/lumber/lumber.go`
+**Modified file:** `pkg/lumber/options.go`
 
-Modify `New()` to invoke the downloader when `WithAutoDownload` is set and no explicit model path is provided.
+Added two fields to the `options` struct:
 
 ```go
-func New(opts ...Option) (*Lumber, error) {
-    o := defaultOptions()
-    for _, opt := range opts {
-        opt(&o)
-    }
-
-    // New: auto-download if requested and no explicit paths provided
-    if o.autoDownload && o.modelDir == "" && o.modelPath == "" {
-        cacheDir, err := resolveAutoDownloadDir(o)
-        if err != nil {
-            return nil, fmt.Errorf("lumber: %w", err)
-        }
-        if err := downloadModels(cacheDir); err != nil {
-            return nil, fmt.Errorf("lumber: %w", err)
-        }
-        if err := downloadORT(cacheDir); err != nil {
-            return nil, fmt.Errorf("lumber: %w", err)
-        }
-        o.modelDir = cacheDir
-    }
-
-    modelPath, vocabPath, projPath := resolvePaths(o)
-    // ... rest unchanged ...
+type options struct {
+    // ... existing fields ...
+    autoDownload bool
+    cacheDir     string
 }
 ```
 
-**Concurrency safety:** Multiple goroutines (or processes) calling `New(WithAutoDownload())` simultaneously must not corrupt the cache. The atomic-rename download pattern from Section 2 handles this — concurrent downloads of the same file race harmlessly, and the final rename is atomic on both Linux and macOS.
+Two new `Option` functions:
 
-**Files:**
+#### `WithAutoDownload() Option`
 
-| File | Action |
-|------|--------|
-| `pkg/lumber/lumber.go` | modified — auto-download block before `resolvePaths` |
+Enables automatic model and ORT download on first `New()` call. Opt-in only — default behavior is unchanged. Downloads ~35-60MB to the OS cache directory, cached for subsequent calls.
+
+#### `WithCacheDir(dir string) Option`
+
+Overrides the default cache directory. Only relevant when `WithAutoDownload` is used.
+
+**Precedence chain** (unchanged from plan):
+
+```
+WithModelPaths > WithModelDir > WithAutoDownload > error ("no model files")
+```
+
+The auto-download guard in `New()` checks `o.modelDir == "" && o.modelPath == ""` — if either explicit option was set, auto-download is skipped entirely.
 
 ---
 
-### Section 5: Semver Tagging Strategy
+### 4. Wiring Auto-Download into `New()`
 
-**No code changes.** This is a process change.
+**Modified file:** `pkg/lumber/lumber.go`
 
-**Current state:** No tags exist. All consumers use pseudo-versions (`v0.0.0-YYYYMMDD-commit`).
+Added an auto-download block at the top of `New()`, between option parsing and `resolvePaths()`:
 
-**Action:** Tag the current `master` (after this phase lands) as `v0.9.0`. The version signals:
-- `v0.x.x` — pre-1.0, breaking changes possible per Go semver convention
-- `0.9.0` — close to feature-complete for a v1.0 library API, but reserving room for breaking changes found during real-world integration
-
-**Tagging workflow:**
-```bash
-git tag -a v0.9.0 -m "v0.9.0: library bootstrap with auto-download, semver tagging"
-git push origin v0.9.0
+```go
+// Auto-download models + ORT if requested and no explicit paths provided.
+if o.autoDownload && o.modelDir == "" && o.modelPath == "" {
+    cacheDir := o.cacheDir
+    if cacheDir == "" {
+        var err error
+        cacheDir, err = defaultCacheDir()
+        if err != nil {
+            return nil, fmt.Errorf("lumber: %w", err)
+        }
+    }
+    if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+        return nil, fmt.Errorf("lumber: creating cache dir: %w", err)
+    }
+    if err := downloadModels(cacheDir); err != nil {
+        return nil, fmt.Errorf("lumber: %w", err)
+    }
+    if err := downloadORT(cacheDir); err != nil {
+        return nil, fmt.Errorf("lumber: %w", err)
+    }
+    o.modelDir = cacheDir
+}
 ```
 
-This triggers the existing `.github/workflows/release.yml` from Phase 9, producing platform tarballs automatically.
+**Key detail:** After successful download, `o.modelDir` is set to the cache directory. This means `resolvePaths(o)` — which is called next — resolves model/vocab/projection paths relative to the cache dir, using the exact same path-joining logic as manual `WithModelDir`. Zero special-casing downstream.
 
-**Going forward:**
-- Patch versions (`v0.9.1`) for bug fixes
-- Minor versions (`v0.10.0`) for new features
-- `v1.0.0` when the public API in `pkg/lumber/` is stable and validated by multiple consumers
+Added `"os"` to imports for `os.MkdirAll`.
 
-**Update `internal/config/config.go`:**
+---
+
+### 5. Version Bump
+
+**Modified file:** `internal/config/config.go`
+
 ```go
+// Before:
+var Version = "0.8.1"
+
+// After:
 var Version = "0.9.0"
 ```
 
-**Files:**
-
-| File | Action |
-|------|--------|
-| `internal/config/config.go` | modified — version bump to `0.9.0` |
+This aligns the default version with the `v0.9.1` semver tag. The release workflow injects the same version via `-ldflags`.
 
 ---
 
-### Section 6: Documentation & Integration Guide
+### 6. Documentation Updates
 
-**Files:** `README.md`, `pkg/lumber/doc.go`, `pkg/lumber/example_test.go`
+#### `pkg/lumber/doc.go`
 
-#### README
+Updated the package-level godoc quick-start to show `WithAutoDownload()` as the primary path:
 
-Add a "Use as a Go library" section showing both integration paths:
-
-```markdown
-## Use as a Go library
-
-    go get github.com/kaminocorp/lumber@v0.9.0
-
-### Auto-download (recommended for getting started)
-
-    l, err := lumber.New(lumber.WithAutoDownload())
-    // Downloads ~35-60MB of model files on first call.
-    // Cached at ~/.cache/lumber — subsequent calls are instant.
-
-### Pre-downloaded models (recommended for production/Docker)
-
-    l, err := lumber.New(lumber.WithModelDir("/opt/lumber/models"))
-    // Use make download-model or Dockerfile curl stage to prepare the directory.
+```go
+// Quick start (auto-download, recommended for getting started):
+//
+//   l, err := lumber.New(lumber.WithAutoDownload())
 ```
 
-#### doc.go
+Added a note about cache location and a second example for pre-downloaded models (production/Docker).
 
-Update the package documentation quick-start to show `WithAutoDownload()` as the primary path.
+#### `pkg/lumber/example_test.go`
 
-#### example_test.go
+Added `Example_autoDownload()` — a runnable godoc example gated behind `LUMBER_TEST_AUTODOWNLOAD` env var (since it requires network + ONNX Runtime). Falls back to hardcoded output in CI/test environments without network access, same pattern as the existing `Example()`.
 
-Add a second example function showing auto-download usage (ONNX-gated with fallback, same pattern as existing example).
+#### `README.md`
 
-**Files:**
-
-| File | Action |
-|------|--------|
-| `README.md` | modified — "Use as a Go library" section |
-| `pkg/lumber/doc.go` | modified — updated quick-start |
-| `pkg/lumber/example_test.go` | modified — add auto-download example |
+Rewrote the "Library Usage" section:
+- Version-pinned `go get` command: `go get github.com/kaminocorp/lumber@v0.9.1`
+- **Auto-download** subsection (recommended for getting started) showing `WithAutoDownload()`
+- **Pre-downloaded models** subsection (recommended for production/Docker) showing `WithModelDir()`
+- Existing batch, structured input, and taxonomy introspection examples preserved unchanged
 
 ---
 
-## Summary
+## Design Decisions
 
-### Files created (2)
+### Opt-in download, not default
 
-| File | Purpose |
-|------|---------|
-| `pkg/lumber/cache.go` | Cache directory resolution (OS-aware) |
-| `pkg/lumber/download.go` | Model + ORT downloader with checksum verification |
+`lumber.New()` without options still expects local model files (defaulting to `./models/`). Auto-download activates only with an explicit `WithAutoDownload()`. Rationale: implicit network calls in a constructor are surprising and can break in air-gapped environments. The consumer must consciously opt in to "fetch files from the internet on first run."
 
-### Files modified (6)
+### SHA256 embedded in binary, not fetched from remote
 
-| File | Change |
-|------|--------|
-| `pkg/lumber/options.go` | `WithAutoDownload()`, `WithCacheDir()` options |
-| `pkg/lumber/lumber.go` | Auto-download wiring in `New()` |
-| `internal/config/config.go` | Version bump to `0.9.0` |
-| `README.md` | Library usage section with auto-download |
-| `pkg/lumber/doc.go` | Updated quick-start |
-| `pkg/lumber/example_test.go` | Auto-download example |
+Checksums are hardcoded constants in `download.go`, not fetched from HuggingFace at runtime. This means:
+- No TOCTOU between "check remote checksum" and "download file"
+- Works offline if cache is populated
+- Model version is pinned to the Lumber version — updating models requires a Lumber version bump
 
-### Tests added
+Trade-off: updating the model requires updating checksums in code and releasing a new Lumber version. This is intentional — it prevents silent model drift and keeps classification deterministic per Lumber version.
+
+### Streaming ORT extraction
+
+The ORT `.tgz` is ~8-35MB. Rather than downloading to disk, decompressing, and then extracting, we stream: `http.Get` → `gzip.NewReader` → `tar.NewReader` → `atomicWriteFromReader`. This uses constant memory regardless of archive size and avoids temporary files for the archive itself.
+
+### `io.MultiWriter` for hash-while-write
+
+Computing SHA256 during download (not after) eliminates a second full read of the file. For the 23MB `model_quantized.onnx_data`, this saves ~23MB of disk I/O.
+
+### No ORT checksum verification
+
+Unlike model files, the ORT library doesn't have an embedded SHA256 check. Rationale: the ORT archive URL includes the exact version, and corrupted downloads would fail at `ort.InitializeEnvironment()` with a clear error. Adding checksums would require maintaining a per-platform, per-version checksum table — complexity not justified by the risk.
+
+---
+
+## Files Created (3)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `pkg/lumber/cache.go` | 22 | Cache directory resolution (`LUMBER_CACHE_DIR` > `os.UserCacheDir()/lumber`) |
+| `pkg/lumber/download.go` | 279 | Model + ORT downloader: checksum verification, atomic writes, tar extraction |
+| `pkg/lumber/download_test.go` | 189 | 10 tests covering all download behaviors |
+
+## Files Modified (5)
+
+| File | What Changed |
+|------|-------------|
+| `pkg/lumber/options.go` | Added `autoDownload`, `cacheDir` fields; `WithAutoDownload()`, `WithCacheDir()` option funcs |
+| `pkg/lumber/lumber.go` | Auto-download block in `New()` before `resolvePaths`; added `"os"` import |
+| `internal/config/config.go` | Version `"0.8.1"` → `"0.9.0"` |
+| `pkg/lumber/doc.go` | Quick-start updated to show `WithAutoDownload()` as primary path |
+| `pkg/lumber/example_test.go` | Added `Example_autoDownload()` |
+| `README.md` | Library section rewritten with auto-download + pre-downloaded model paths |
+
+**New files: 3. Modified files: 6. Total: 9.**
+
+## Tests Added
 
 | File | Tests | What |
 |------|-------|------|
-| `pkg/lumber/download_test.go` | ~8-10 | Cache dir resolution, checksum verification, skip-if-cached, atomic write, platform detection, HTTP error handling (httptest server), corrupt file re-download |
+| `pkg/lumber/download_test.go` | `TestDefaultCacheDir` | `LUMBER_CACHE_DIR` override and OS fallback |
+| | `TestFileValid` | Non-existent, no-checksum, matching, mismatched |
+| | `TestDownloadFile` | Happy path with checksum verification via httptest |
+| | `TestDownloadFile_ChecksumMismatch` | Corrupt download rejected, temp file cleaned up |
+| | `TestDownloadFile_HTTPError` | HTTP 404 returns error |
+| | `TestDownloadFile_SkipsIfCached` | Valid cached file not re-downloaded |
+| | `TestDownloadFile_SubdirectoryCreated` | `os.MkdirAll` for nested paths (e.g., `2_Dense/`) |
+| | `TestDownloadFile_CorruptCacheRedownloaded` | Corrupt file detected and replaced |
+| | `TestOrtPlatform` | Platform detection matches current `GOOS`/`GOARCH` |
+| | `TestAtomicWriteFromReader` | Temp file + rename produces correct output |
 
-### Implementation order
+All tests use `httptest.NewServer` for download tests (no real network calls). ORT platform test adapts to the host platform.
 
-1. **Section 1** — Cache directory resolution (no deps, pure logic)
-2. **Section 2** — Downloader (depends on cache dir)
-3. **Section 3** — New options (depends on nothing, can parallel with 1-2)
-4. **Section 4** — Wire into `New()` (depends on 1-3)
-5. **Section 5** — Version bump + tagging (after code lands)
-6. **Section 6** — Documentation (after API finalized)
+## Verification
 
-### Verification
+```
+go build ./...   — clean (0 errors)
+go vet ./...     — clean (0 warnings)
+go test ./...    — 22 packages pass (0 failures)
+```
 
-1. `lumber.New(lumber.WithAutoDownload())` on a clean machine → downloads model files to `~/.cache/lumber/`, classifies a log line correctly
-2. Second call with same cache → no network requests, instant startup
-3. `lumber.New(lumber.WithModelDir("./models"))` → existing behavior unchanged, no download attempted
-4. `go get github.com/kaminocorp/lumber@v0.9.0` → resolves cleanly
-5. Corrupt a cached file → next `New(WithAutoDownload())` re-downloads it
-6. Run without network + empty cache → clear error message
+## What's Left (Deferred Per Plan)
 
-### Deferred
-
-- **Auto-update mechanism** — checking for newer model versions. v1 uses a single pinned model version with embedded checksums. Model updates require a Lumber version bump.
-- **Download progress callback** — `WithProgressFunc(func(downloaded, total int64))` for consumers who want to show download progress in their UI. Can be added later without breaking the API.
-- **ONNX Runtime system-level install detection** — checking `ldconfig`, `pkg-config`, or `$LD_LIBRARY_PATH` for a system-installed ORT before downloading a private copy. Optimization, not required for correctness.
-- **Windows support** — `download-ort` platform matrix doesn't include Windows. Deferred per Phase 9.
+- **Semver tag** — `git tag -a v0.9.1 -m "..."` + `git push origin v0.9.1`. Manual step, ready to execute.
+- **Auto-update mechanism** — checking for newer model versions. v1 uses pinned checksums.
+- **Download progress callback** — `WithProgressFunc(func(downloaded, total int64))` for UI consumers.
+- **ORT system-level detection** — checking `ldconfig`/`pkg-config` before downloading a private copy.
+- **Windows support** — ORT platform matrix doesn't include Windows.

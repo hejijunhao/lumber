@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kaminocorp/lumber/internal/cli"
 	"github.com/kaminocorp/lumber/internal/config"
 	"github.com/kaminocorp/lumber/internal/connector"
 	"github.com/kaminocorp/lumber/internal/engine"
@@ -27,7 +28,9 @@ import (
 	"github.com/kaminocorp/lumber/internal/pipeline"
 
 	// Register connector implementations.
+	_ "github.com/kaminocorp/lumber/internal/connector/file"
 	_ "github.com/kaminocorp/lumber/internal/connector/flyio"
+	_ "github.com/kaminocorp/lumber/internal/connector/stdin"
 	_ "github.com/kaminocorp/lumber/internal/connector/supabase"
 	_ "github.com/kaminocorp/lumber/internal/connector/vercel"
 )
@@ -38,6 +41,46 @@ func main() {
 	if cfg.ShowVersion {
 		fmt.Printf("lumber %s\n", config.Version)
 		os.Exit(0)
+	}
+
+	// Print startup banner to stderr (doesn't mix with NDJSON on stdout).
+	fmt.Fprintf(os.Stderr, "\n  lumber %s\n\n", config.Version)
+
+	// Wizard / auto-detect logic: runs when no connector is configured.
+	if cfg.Connector.Provider == "" {
+		if isTerminal(os.Stdin) {
+			// TTY — run interactive wizard.
+			var err error
+			cfg, err = cli.RunWizard(cfg)
+			if err != nil {
+				slog.Error("wizard failed", "error", err)
+				os.Exit(1)
+			}
+		} else if stdinHasData() {
+			// Piped input — auto-detect stdin connector.
+			cfg.Connector.Provider = "stdin"
+			cfg.Mode = "stream"
+		} else {
+			// Not a TTY, no pipe — print usage hint and exit.
+			fmt.Fprintf(os.Stderr, "No connector configured. Run interactively for setup wizard, or use:\n")
+			fmt.Fprintf(os.Stderr, "  lumber -connector stdin       (pipe logs via stdin)\n")
+			fmt.Fprintf(os.Stderr, "  lumber -connector file -file PATH\n")
+			fmt.Fprintf(os.Stderr, "  lumber -connector vercel      (+ LUMBER_API_KEY)\n")
+			os.Exit(1)
+		}
+	}
+
+	// Model readiness check (non-wizard path).
+	if !cli.ModelsReady(cfg) {
+		if isTerminal(os.Stdin) {
+			fmt.Fprintf(os.Stderr, "Model files not found. Run 'lumber' with no flags to launch the setup wizard,\n")
+			fmt.Fprintf(os.Stderr, "or download manually: make download-model\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Model files not found at configured paths.\n")
+			fmt.Fprintf(os.Stderr, "Download with: make download-model && make download-ort\n")
+			fmt.Fprintf(os.Stderr, "Or set LUMBER_MODEL_PATH, LUMBER_VOCAB_PATH, LUMBER_PROJECTION_PATH\n")
+		}
+		os.Exit(1)
 	}
 
 	logging.Init(cfg.Output.Format == "stdout", logging.ParseLevel(cfg.LogLevel))
@@ -188,4 +231,22 @@ func parseVerbosity(s string) compactor.Verbosity {
 	default:
 		return compactor.Standard
 	}
+}
+
+// isTerminal reports whether f is connected to a terminal (TTY).
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+// stdinHasData reports whether stdin is a pipe with data (not a TTY).
+func stdinHasData() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) == 0
 }

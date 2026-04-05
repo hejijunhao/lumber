@@ -2,6 +2,8 @@
 
 ## Index
 
+- [0.10.1](#0101--2026-04-05) — Post-review fixes: context leak, dead GOOS check, silent parse error, filepath.Dir, stdlib helpers, scanner error logging
+- [0.10.0](#0100--2026-04-05) — Interactive CLI: setup wizard, stdin/file connectors, download extraction, config validation, auto-detect piped input
 - [0.9.1](#091--2026-04-02) — Library bootstrap: auto-download models + ORT on first use, OS-aware cache, `WithAutoDownload()` API
 - [0.9.0](#090--2026-04-02) — Distribution & release pipeline: platform-aware ORT, version injection, multi-platform Makefile, GitHub Release workflow
 - [0.8.0](#080--2026-03-09) — Model source consolidation: all downloads now use official `MongoDB/mdbr-leaf-mt` repo
@@ -20,6 +22,169 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.10.1 — 2026-04-05
+
+**Post-review fixes (Phase 10, Section 12)**
+
+Production-readiness review of Phase 10. Eight fixes across six files addressing a `go vet` failure, dead code, silent error discard, platform-fragile path handling, and inconsistent error logging.
+
+### Fixed
+
+- **Context leak in file connector test** — `TestStream_RespectsContextCancellation` in `internal/connector/file/file_test.go` did not call `cancel()` on all code paths. `go vet` flagged this as a possible context leak. Added `defer cancel()` immediately after `context.WithCancel`.
+- **Dead `os.Getenv("GOOS")` in wizard test** — `ortLibNameForTest()` in `internal/cli/wizard_test.go` used `os.Getenv("GOOS")` to detect the platform. `GOOS` is a build-time constant (`runtime.GOOS`), not a runtime environment variable — `os.Getenv` always returned `""`. The fallback `/System` stat check masked this on macOS. Replaced with `runtime.GOOS`.
+- **Silent time parse error in wizard** — `promptQueryRange` in `internal/cli/wizard.go` discarded `time.Parse` errors with `_` after `huh` form validation. If the validated value and parsed value diverged (library bug, mutation), a zero `time.Time` would silently pass through and surface later as a confusing "missing -from" error. Parse errors now propagate with context.
+- **Unix-only path directory extraction** — `Validate()` in `internal/config/config.go` used `strings.LastIndex(path, "/")` to extract the parent directory of the output file path — a manual reimplementation of `filepath.Dir()` that fails on edge cases (`"./output.jsonl"` → `""` instead of `"."`). Replaced with `filepath.Dir()`.
+- **Custom string helpers replaced with stdlib** — `wizard_test.go` had hand-rolled `containsStr`/`containsLoop` (15 lines) reimplementing `strings.Contains`. Replaced with single `strings.Contains` call.
+- **Redundant `!cfg.ShowVersion` guard** — `main.go` wizard block was gated by `cfg.Connector.Provider == "" && !cfg.ShowVersion`. The `ShowVersion` check was dead code — lines 41-44 already `os.Exit(0)` when the flag is set. Removed the redundant condition.
+- **Stdin scanner error silently swallowed** — `internal/connector/stdin/stdin.go` Stream goroutine did not check `scanner.Err()` after the scan loop, silently discarding read errors. The file connector already logged these. Added `scanner.Err()` check with `slog.Warn` for consistency.
+- **Hardcoded model paths in wizard** — `promptModelDownload` in `internal/cli/wizard.go` hardcoded three path strings (`"model_quantized.onnx"`, `"vocab.txt"`, `"2_Dense/model.safetensors"`) that also exist in `download.ModelFiles[].RelPath`. Config paths now derived by iterating `download.ModelFiles`, eliminating the duplication.
+
+### Files changed
+
+| File | Action | What |
+|------|--------|------|
+| `internal/connector/file/file_test.go` | modified | `defer cancel()` for context leak |
+| `internal/cli/wizard.go` | modified | Parse errors propagated; model paths derived from `download.ModelFiles` |
+| `internal/cli/wizard_test.go` | modified | `runtime.GOOS`; `strings.Contains`; removed custom helpers |
+| `internal/config/config.go` | modified | `filepath.Dir()` replaces manual string split |
+| `cmd/lumber/main.go` | modified | Removed redundant `!cfg.ShowVersion` |
+| `internal/connector/stdin/stdin.go` | modified | `scanner.Err()` check added |
+
+**New files: 0. Modified files: 6. Total: 6.**
+
+### Completion doc
+
+`docs/completions/phase-10-section-12-review-fixes.md`
+
+---
+
+## 0.10.0 — 2026-04-05
+
+**Interactive CLI & local connectors (Phase 10)**
+
+Transforms Lumber from a library-and-flags tool into a functional CLI application with an interactive setup wizard, local log connectors (stdin and file), download infrastructure sharing, and comprehensive config validation. First-run users with no configuration now get a guided 4-form wizard instead of cryptic error messages. Piped input is auto-detected. Zero breaking changes to the public library API.
+
+### Added
+
+- **Interactive setup wizard** ��� `internal/cli/wizard.go` (~505 lines) with `RunWizard(config.Config)` entry point. Four-form flow via `charmbracelet/huh`:
+  1. **Model readiness** — checks if model files + ORT library exist; offers one-click download (~65MB) to OS cache directory; updates config paths on success.
+  2. **Source selection** — two-tier: local (file path with existence validation, or stdin with usage hint) vs. cloud (provider select → masked API key → provider-specific extras for Vercel/Fly.io/Supabase).
+  3. **Output options** — multi-select for additional outputs (file, webhook) with stdout always on; verbosity picker; mode select (stream/query) for cloud sources with RFC3339 time range prompts for query mode.
+  4. **Summary confirmation** — compact config overview; user confirms with "Start" or cancels.
+
+- **Stdin connector** — `internal/connector/stdin/stdin.go` implements `connector.Connector`. Reads log lines from `os.Stdin` (or injected `io.Reader`) via `bufio.Scanner` in a goroutine. 1MB line buffer for stack traces. Empty lines skipped. Channel buffer of 64. Registered as `"stdin"` in connector registry. Query returns error (streaming only).
+
+- **File connector** — `internal/connector/file/file.go` implements `connector.Connector`. Stream mode reads file sequentially; Query mode supports `Limit` parameter (time filters ignored — file lines have no inherent timestamps). File path from `cfg.Extra["file"]`, validated by `resolveFilePath()`. `Metadata["file"]` stores `filepath.Base` only. Registered as `"file"` in connector registry.
+
+- **Download extraction** — `internal/download/download.go` extracts all download machinery from `pkg/lumber/` as exported functions: `DownloadModels()`, `DownloadORT()`, `OrtPlatform()`, `FileValid()`, `DownloadFile()`, `AtomicWriteFromReader()`, `DefaultCacheDir()`. Enables both the CLI wizard and the library API to share download logic without import cycles.
+
+- **Config validation** — `Config.Validate()` in `internal/config/config.go` performs comprehensive validation with aggregated error reporting (all errors returned, not just first):
+  - API key required for cloud connectors only (stdin, file, empty provider exempt)
+  - File connector: path required and file must exist
+  - Model files must exist on disk
+  - Confidence threshold in [0, 1]
+  - Verbosity enum (minimal|standard|full)
+  - Dedup window non-negative
+  - Mode enum (stream|query)
+  - Query mode requires `-from`/`-to` time range
+  - Webhook URL must start with `http://` or `https://`
+  - File output parent directory must exist
+
+- **CLI flags** — `-file` for file connector path; `-connector` now accepts `stdin` and `file`.
+
+- **Environment variable** — `LUMBER_FILE_PATH` maps to `Extra["file"]` for file connector.
+
+- **CLI styles** — `internal/cli/style.go` with `lipgloss`-based styles (title, success, muted) and `printHeader()`/`printReady()` helpers for wizard UI.
+
+- **Wizard tests** — `internal/cli/wizard_test.go` with 6 tests covering `ModelsReady` (all present, missing model, all missing) and `buildSummary` (stdout only, file + webhook, file connector). Interactive form testing intentionally deferred — `huh`'s programmatic input API couples tests to `bubbletea` internals.
+
+- **Connector tests** — `internal/connector/stdin/stdin_test.go` (6 tests: line reading, context cancellation, empty input, empty line skipping, query error, 100KB+ long lines) and `internal/connector/file/file_test.go` (9 tests: file reading, context cancellation, limit, missing file, empty file, metadata, missing path, unlimited read, time filters ignored).
+
+- **Download tests** — `internal/download/download_test.go` (10 tests: cache dir precedence, file validity, download with checksum, checksum mismatch, HTTP error, cache skip, subdirectory creation, corrupt cache re-download, platform detection, atomic write).
+
+- **Config validation tests** — 17 new tests in `internal/config/config_test.go` covering valid config, bad confidence, bad verbosity, negative dedup, missing model, missing API key, multiple errors, bad mode, query mode (valid, missing from, missing to, missing both), parse errors, webhook URL (valid/invalid), file output (valid/bad dir), local connectors (stdin/file skip API key, file requires path, file validates existence), cloud connector still requires API key, empty provider skips API key.
+
+### Changed
+
+- **Default connector** — changed from `"vercel"` to `""` (empty string). Signals "not configured" and triggers the wizard on TTY or auto-detect on pipe.
+- **`cmd/lumber/main.go` decision tree** — when no connector configured: TTY → `cli.RunWizard(cfg)`; piped input → auto-detect stdin connector (`cfg.Connector.Provider = "stdin"`); neither → usage hint and exit. Model readiness check runs after wizard, before validation. Startup banner printed to stderr. New blank imports for stdin/file connector registration.
+- **`pkg/lumber/download.go`** — rewritten as thin wrappers delegating to `internal/download/`. Public API unchanged.
+- **`pkg/lumber/cache.go`** — rewritten as thin wrapper delegating to `internal/download/DefaultCacheDir()`.
+- **`pkg/lumber/download_test.go`** — rewritten as 5 wrapper-validation contract tests.
+- **Usage text** — updated with wizard, stdin, file, and pipe auto-detect examples. Connector list updated. `LUMBER_FILE_PATH` documented.
+- **Version bump** — `0.9.1` → `0.10.0`.
+
+### Design decisions
+
+- **Wizard is opt-in by state, not flag.** Triggers on empty provider + TTY, not a `-wizard` flag. Matches the "zero-config first run" UX goal.
+- **One `huh.NewForm().Run()` per step.** Enables conditional branching (cloud users see different forms than local users) without building a single monolithic form.
+- **Download extraction to `internal/`, not `pkg/`.** CLI wizard needs download functions but they shouldn't be part of the public library API. `internal/` restricts visibility to the module while keeping functions exported for cross-package access.
+- **Piped input auto-detection.** `cat app.log | lumber` works without flags. `isTerminal()` vs `stdinHasData()` distinguish TTY from pipe, matching the UX of tools like `jq`.
+- **Pretty-print default for wizard sessions.** TTY = interactive = user-friendly output. Non-TTY paths keep compact NDJSON.
+- **Aggregated validation errors.** `Validate()` collects all errors, not just the first. Users see every problem at once instead of fixing one, re-running, fixing the next.
+
+### New dependencies
+
+| Package | Version | Why |
+|---------|---------|-----|
+| `github.com/charmbracelet/huh` | v1.0.0 | Interactive TUI forms for setup wizard |
+| `github.com/charmbracelet/lipgloss` | (transitive) | Terminal styling for wizard UI |
+
+### Files changed
+
+| File | Action | What |
+|------|--------|------|
+| `internal/cli/style.go` | **new** | Lipgloss styles, `printHeader()`, `printReady()` |
+| `internal/cli/wizard.go` | **new** | 4-form interactive wizard, `RunWizard()`, `ModelsReady()` |
+| `internal/cli/wizard_test.go` | **new** | 6 tests for `ModelsReady` and `buildSummary` |
+| `internal/connector/stdin/stdin.go` | **new** | Stdin connector with `io.Reader` injection |
+| `internal/connector/stdin/stdin_test.go` | **new** | 6 tests for stdin connector |
+| `internal/connector/file/file.go` | **new** | File connector with Stream + Query |
+| `internal/connector/file/file_test.go` | **new** | 9 tests for file connector |
+| `internal/download/download.go` | **new** | Extracted download functions (shared by CLI + library) |
+| `internal/download/download_test.go` | **new** | 10 tests for download logic |
+| `cmd/lumber/main.go` | modified | Wizard integration, auto-detect, model check, connector imports |
+| `internal/config/config.go` | modified | `Validate()`, default connector `""`, `-file` flag, `LUMBER_FILE_PATH`, usage text, version bump |
+| `internal/config/config_test.go` | modified | 17 new validation tests |
+| `pkg/lumber/download.go` | modified | Thin wrapper over `internal/download/` |
+| `pkg/lumber/cache.go` | modified | Thin wrapper over `internal/download/DefaultCacheDir()` |
+| `pkg/lumber/download_test.go` | modified | 5 wrapper contract tests |
+| `go.mod` | modified | `huh` dependency added |
+| `go.sum` | modified | Updated checksums |
+
+**New files: 9. Modified files: 8. Total: 17.**
+
+### Tests added
+
+| Package | Tests | Count |
+|---------|-------|-------|
+| `internal/cli` | `ModelsReady` (3), `buildSummary` (3) | 6 |
+| `internal/connector/stdin` | Stream (4), Query (1), LongLines (1) | 6 |
+| `internal/connector/file` | Stream (5), Query (3), Config (1) | 9 |
+| `internal/download` | Cache, FileValid, Download (5), OrtPlatform, AtomicWrite | 10 |
+| `internal/config` | Validation (17) | 17 |
+| `pkg/lumber` | Wrapper contract tests | 5 |
+| **Total** | | **53** |
+
+### Deferred
+
+- **Interactive wizard testing** — `huh`'s programmatic input API couples tests to `bubbletea` internals (brittle, low value). Manual verification via checklist sufficient.
+- **Download progress callback** — `WithProgressFunc(func(downloaded, total int64))` for UI consumers.
+- **ORT system-level detection** — checking `ldconfig`/`pkg-config` before downloading a private copy.
+- **Windows support** — ORT platform matrix covers Linux and macOS only.
+
+### Completion docs
+
+- `docs/completions/phase-10-section-1-huh-dependency.md`
+- `docs/completions/phase-10-section-2-download-extraction.md`
+- `docs/completions/phase-10-section-3-stdin-connector.md`
+- `docs/completions/phase-10-section-4-file-connector.md`
+- `docs/completions/phase-10-section-5-config-validation.md`
+- `docs/completions/phase-10-section-6-wizard.md`
+- `docs/completions/phase-10-sections-7-9-10-11.md`
 
 ---
 
