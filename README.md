@@ -20,6 +20,10 @@
   <a href="docs/changelog.md">Changelog</a>
 </p>
 
+<p align="center">
+  <code>v0.10.6</code> · Apache 2.0 · Go 1.24+
+</p>
+
 ---
 
 ## Why
@@ -78,6 +82,7 @@ Download the latest release for your platform from
 | Linux x86_64 | `lumber-vX.Y.Z-linux-amd64.tar.gz` |
 | Linux ARM64 | `lumber-vX.Y.Z-linux-arm64.tar.gz` |
 | macOS Apple Silicon | `lumber-vX.Y.Z-darwin-arm64.tar.gz` |
+| macOS Intel | `lumber-vX.Y.Z-darwin-amd64.tar.gz` |
 
 Extract and run:
 
@@ -102,11 +107,37 @@ make build
 bin/lumber -version
 ```
 
+### Go library
+
+```bash
+go get github.com/kaminocorp/lumber
+```
+
+See [Library Usage](#library-usage) below.
+
 ---
 
 ## Quickstart
 
-### Stream logs
+### Interactive setup
+
+Run `lumber` with no arguments to launch the setup wizard. It walks through connector selection, credentials, output destinations, and auto-downloads model files if needed.
+
+```bash
+./bin/lumber
+```
+
+### Pipe logs from stdin
+
+```bash
+cat /var/log/app.log | ./bin/lumber
+# or
+tail -f /var/log/app.log | ./bin/lumber
+```
+
+Lumber auto-detects piped input and classifies each line.
+
+### Stream from a provider
 
 ```bash
 export LUMBER_CONNECTOR=vercel
@@ -114,6 +145,12 @@ export LUMBER_API_KEY=your-token-here
 export LUMBER_VERCEL_PROJECT_ID=prj_your-project-id
 
 ./bin/lumber
+```
+
+### Classify a local file
+
+```bash
+./bin/lumber -connector file -file /var/log/app.log
 ```
 
 ### Query historical logs
@@ -167,34 +204,38 @@ Examples:
 
 ## Connectors
 
-Three connectors are implemented. Each handles auth, pagination, rate limiting, and produces `RawLog` entries that feed into the classification engine.
+Five connectors are implemented. Each produces `RawLog` entries that feed into the classification engine.
 
-### Vercel
+### Cloud providers
 
-Connects to the Vercel REST API for project logs.
+| Connector | Env Var | Description |
+|-----------|---------|-------------|
+| **Vercel** | `LUMBER_CONNECTOR=vercel` | REST API, project-scoped tokens |
+| **Fly.io** | `LUMBER_CONNECTOR=flyio` | HTTP logs API |
+| **Supabase** | `LUMBER_CONNECTOR=supabase` | Analytics API, multi-table queries |
+
+### Local sources
+
+| Connector | Env Var | Description |
+|-----------|---------|-------------|
+| **stdin** | Auto-detected | Pipe logs directly: `cat app.log \| lumber` |
+| **file** | `LUMBER_CONNECTOR=file` | Read from a local log file |
+
+### Provider configuration
 
 ```bash
+# Vercel
 export LUMBER_CONNECTOR=vercel
 export LUMBER_API_KEY=your-vercel-token
 export LUMBER_VERCEL_PROJECT_ID=prj_xxx
 export LUMBER_VERCEL_TEAM_ID=team_xxx   # optional
-```
 
-### Fly.io
-
-Connects to the Fly.io HTTP logs API.
-
-```bash
+# Fly.io
 export LUMBER_CONNECTOR=flyio
 export LUMBER_API_KEY=your-fly-token
 export LUMBER_FLY_APP_NAME=your-app-name
-```
 
-### Supabase
-
-Connects to the Supabase Analytics API. Queries across multiple log tables.
-
-```bash
+# Supabase
 export LUMBER_CONNECTOR=supabase
 export LUMBER_API_KEY=your-supabase-service-key
 export LUMBER_SUPABASE_PROJECT_REF=your-project-ref
@@ -291,10 +332,10 @@ Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/MongoDB/mdbr-le
 
 ## Library Usage
 
-Lumber can be imported as a Go library. Classify log text directly in your application — no subprocess, no stdout parsing.
+Lumber can be imported as a Go library. Classify log text directly in your application — no subprocess, no stdout parsing, no network calls at runtime.
 
 ```bash
-go get github.com/kaminocorp/lumber@v0.9.1
+go get github.com/kaminocorp/lumber
 ```
 
 ```go
@@ -319,7 +360,7 @@ fmt.Println(event.Type, event.Category) // ERROR connection_failure
 ### Pre-downloaded models (recommended for production/Docker)
 
 ```go
-// Use make download-model or Dockerfile curl stage to prepare the directory.
+// Use make download-model or Dockerfile COPY stage to prepare the directory.
 l, err := lumber.New(lumber.WithModelDir("/opt/lumber/models"))
 if err != nil {
     log.Fatal(err)
@@ -330,12 +371,15 @@ defer l.Close()
 ### Batch classification
 
 ```go
-// Single batched ONNX inference call — ~10x faster than looping Classify
+// Single batched ONNX inference call — ~10x faster per line than looping Classify
 events, _ := l.ClassifyBatch([]string{
     "ERROR: connection refused",
     "GET /api/users 200 OK 12ms",
     "Build succeeded in 45s",
 })
+for _, e := range events {
+    fmt.Printf("%-12s %-20s (%.2f)\n", e.Type, e.Category, e.Confidence)
+}
 ```
 
 ### Structured input with metadata
@@ -357,9 +401,32 @@ for _, cat := range l.Taxonomy() {
 }
 ```
 
-The `Lumber` instance is safe for concurrent use. Create once, reuse across requests.
+### API summary
 
-For complete API reference, integration patterns (monitoring agents, HTTP middleware, batch workers), performance tuning, and troubleshooting, see the **[Integration Guide](docs/integration-guide.md)**.
+| Method | Description | Latency |
+|--------|-------------|---------|
+| `New(opts...)` | Initialize engine, load model, pre-embed taxonomy | ~100–300ms (once) |
+| `Classify(text)` | Classify a single log line | ~5–10ms |
+| `ClassifyBatch(texts)` | Batch classify (single ONNX call) | ~50–80ms / 100 lines |
+| `ClassifyLog(log)` | Classify with timestamp, source, metadata | ~5–10ms |
+| `ClassifyLogs(logs)` | Batch classify structured logs | ~50–80ms / 100 logs |
+| `Taxonomy()` | Return the full taxonomy tree (read-only) | ~0ms |
+| `Close()` | Release ONNX runtime resources | — |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithAutoDownload()` | disabled | Auto-fetch model + ORT on first use, cache locally |
+| `WithModelDir(dir)` | `"models"` | Directory containing model files |
+| `WithModelPaths(m, v, p)` | — | Explicit paths for model, vocab, projection |
+| `WithCacheDir(dir)` | `~/.cache/lumber` | Override auto-download cache location |
+| `WithConfidenceThreshold(t)` | `0.5` | Min cosine similarity for classification (0–1) |
+| `WithVerbosity(v)` | `"standard"` | Summary compaction: `minimal`, `standard`, `full` |
+
+The `Lumber` instance is safe for concurrent use from multiple goroutines. Create once at startup, reuse across requests, close on shutdown.
+
+For integration patterns (monitoring agents, HTTP middleware, batch workers), performance tuning, and troubleshooting, see the **[Integration Guide](docs/integration-guide.md)**.
 
 ---
 
@@ -388,15 +455,19 @@ export LUMBER_WEBHOOK_URL=https://hooks.example.com/lumber
 ## Project Structure
 
 ```
-cmd/lumber/              CLI entrypoint
+cmd/lumber/              CLI entrypoint + interactive setup wizard
 pkg/lumber/              Public library API (Classify, ClassifyBatch, Taxonomy)
 internal/
-  config/                Environment + CLI flag configuration
+  cli/                   Interactive setup wizard (charmbracelet/huh)
+  config/                Environment + CLI flag configuration, validation
   connector/             Connector interface, registry
     vercel/              Vercel REST API connector
     flyio/               Fly.io HTTP logs connector
     supabase/            Supabase Analytics connector
+    stdin/               Stdin connector (piped input)
+    file/                Local file connector
     httpclient/          Shared HTTP client (auth, retry, rate limits)
+  download/              Model + ORT auto-download, platform detection
   engine/                Classification engine orchestration
     embedder/            ONNX Runtime embedding (tokenizer, projection)
     classifier/          Cosine similarity classification
@@ -414,7 +485,7 @@ internal/
     async/               Channel-based async wrapper
   pipeline/              Stream and Query orchestration, buffering
 models/                  ONNX model files (downloaded via make)
-docs/                    Plans, completion notes, changelog
+docs/                    Architecture, plans, completion notes, changelog
 ```
 
 ---
@@ -433,28 +504,31 @@ make download-model  # Fetch ONNX model + tokenizer from HuggingFace
 
 ## Status
 
-Lumber is in beta.
+Lumber is production-ready for its core use case: classifying logs from supported providers and local sources into a structured canonical schema.
 
-- [x] Project scaffolding and pipeline skeleton
-- [x] ONNX Runtime integration and model download
-- [x] Pure-Go WordPiece tokenizer
-- [x] Mean pooling and dense projection (1024-dim embeddings)
-- [x] Taxonomy pre-embedding (42 leaves, 8 roots)
-- [x] Classification pipeline — 100% accuracy on 153-entry test corpus
-- [x] Log connectors (Vercel, Fly.io, Supabase)
-- [x] Shared HTTP client with retry and rate limit handling
-- [x] Pipeline integration (stream + query modes)
-- [x] Structured internal logging, config validation
-- [x] Per-log error resilience, bounded dedup buffer
-- [x] Graceful shutdown with timeout
-- [x] CLI flags and query mode access
-- [x] Multi-output architecture (file, webhook, async fan-out)
-- [x] Public library API (`pkg/lumber`)
+### Completed
+
+- [x] ONNX Runtime integration and local embedding (~23MB model, CPU-only)
+- [x] Pure-Go WordPiece tokenizer, mean pooling, dense projection (1024-dim)
+- [x] 42-leaf taxonomy with semantic pre-embedding — 100% accuracy on 153-entry corpus
+- [x] Log connectors: Vercel, Fly.io, Supabase, stdin, local file
+- [x] Shared HTTP client with retry, rate limiting, response size limits
+- [x] Pipeline integration (stream + query modes) with buffering and dedup
+- [x] Multi-output architecture (stdout + file rotation + webhook with retry)
+- [x] Public library API (`pkg/lumber`) — safe for concurrent use
+- [x] Interactive setup wizard with model auto-download
+- [x] Distribution: multi-platform binaries, GitHub Releases, Go module
+- [x] Production hardening: thread safety, path injection protection, credential redaction, NaN/Inf guards, decompression bomb protection, graceful shutdown
+
+### Roadmap
+
 - [ ] Additional connectors (AWS CloudWatch, Datadog, Grafana Loki)
 - [ ] HTTP server mode
 - [ ] Adaptive taxonomy (self-growing/trimming)
+- [ ] Field extraction (structured field parsing from unstructured text)
+- [ ] Performance benchmarks
 
-See [docs/changelog.md](docs/changelog.md) for detailed release notes.
+See [docs/changelog.md](docs/changelog.md) for detailed release notes and [docs/plans/post-beta-proposals.md](docs/plans/post-beta-proposals.md) for the full roadmap.
 
 ---
 
