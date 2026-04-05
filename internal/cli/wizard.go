@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,12 @@ import (
 
 	"github.com/kaminocorp/lumber/internal/config"
 	"github.com/kaminocorp/lumber/internal/download"
+)
+
+// Sentinel errors for wizard outcomes.
+var (
+	ErrWizardCancelled    = errors.New("wizard cancelled by user")
+	ErrModelDownloadDeclined = errors.New("model download declined")
 )
 
 // RunWizard displays an interactive setup wizard and returns a populated Config.
@@ -76,7 +84,7 @@ func RunWizard(base config.Config) (config.Config, error) {
 // ModelsReady checks whether model files and the ORT library are available.
 func ModelsReady(cfg config.Config) bool {
 	for _, path := range []string{cfg.Engine.ModelPath, cfg.Engine.VocabPath, cfg.Engine.ProjectionPath} {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); err != nil {
 			return false
 		}
 	}
@@ -119,7 +127,7 @@ func promptModelDownload(cfg *config.Config) error {
 		fmt.Fprintf(os.Stderr, "\n  Model files are required. To download manually:\n")
 		fmt.Fprintf(os.Stderr, "    make download-model    (from source checkout)\n")
 		fmt.Fprintf(os.Stderr, "    See: https://github.com/kaminocorp/lumber#install\n\n")
-		return fmt.Errorf("model download declined")
+		return ErrModelDownloadDeclined
 	}
 
 	cacheDir, err := download.DefaultCacheDir()
@@ -152,7 +160,7 @@ func promptModelDownload(cfg *config.Config) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "  %s\n\n", successStyle.Render("✓ Models ready"))
+	fmt.Fprintf(os.Stderr, "  %s\n\n", render(successStyle, "✓ Models ready"))
 	return nil
 }
 
@@ -185,8 +193,8 @@ func promptLocalSource(cfg *config.Config) error {
 						if strings.TrimSpace(s) == "" {
 							return fmt.Errorf("file path is required")
 						}
-						if _, err := os.Stat(s); os.IsNotExist(err) {
-							return fmt.Errorf("file not found: %s", s)
+						if _, err := os.Stat(s); err != nil {
+							return fmt.Errorf("file not accessible: %s", s)
 						}
 						return nil
 					}).
@@ -204,7 +212,7 @@ func promptLocalSource(cfg *config.Config) error {
 		cfg.Connector.Extra["file"] = filePath
 	} else {
 		cfg.Connector.Provider = "stdin"
-		fmt.Fprintf(os.Stderr, "  %s\n\n", mutedStyle.Render("Waiting for piped input... (usage: cat app.log | lumber)"))
+		fmt.Fprintf(os.Stderr, "  %s\n\n", render(mutedStyle, "Waiting for piped input... (usage: cat app.log | lumber)"))
 	}
 
 	// Local sources always stream.
@@ -393,8 +401,9 @@ func promptOutputOptions(cfg *config.Config, source string) error {
 					Title("Webhook URL:").
 					Placeholder("https://example.com/logs").
 					Validate(func(s string) error {
-						if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
-							return fmt.Errorf("URL must start with http:// or https://")
+						u, err := url.ParseRequestURI(s)
+						if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+							return fmt.Errorf("invalid URL: must be a valid http:// or https:// URL with a host")
 						}
 						return nil
 					}).
@@ -474,6 +483,9 @@ func promptQueryRange(cfg *config.Config) error {
 	if parseErr != nil {
 		return fmt.Errorf("parsing -to time: %w", parseErr)
 	}
+	if !cfg.QueryFrom.Before(cfg.QueryTo) {
+		return fmt.Errorf("-from (%s) must be before -to (%s)", cfg.QueryFrom.Format(time.RFC3339), cfg.QueryTo.Format(time.RFC3339))
+	}
 	return nil
 }
 
@@ -496,7 +508,7 @@ func promptSummary(cfg *config.Config) error {
 		return fmt.Errorf("wizard cancelled: %w", err)
 	}
 	if !confirmed {
-		return fmt.Errorf("wizard cancelled by user")
+		return ErrWizardCancelled
 	}
 	return nil
 }

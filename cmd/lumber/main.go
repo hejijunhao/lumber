@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -36,15 +38,25 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := config.LoadWithFlags()
 
 	if cfg.ShowVersion {
 		fmt.Printf("lumber %s\n", config.Version)
-		os.Exit(0)
+		return nil
 	}
 
 	// Print startup banner to stderr (doesn't mix with NDJSON on stdout).
 	fmt.Fprintf(os.Stderr, "\n  lumber %s\n\n", config.Version)
+
+	// Initialize logging early so wizard and model checks use the configured logger.
+	logging.Init(cfg.Output.Format == "stdout", logging.ParseLevel(cfg.LogLevel))
 
 	// Wizard / auto-detect logic: runs when no connector is configured.
 	if cfg.Connector.Provider == "" {
@@ -53,20 +65,12 @@ func main() {
 			var err error
 			cfg, err = cli.RunWizard(cfg)
 			if err != nil {
-				slog.Error("wizard failed", "error", err)
-				os.Exit(1)
+				return fmt.Errorf("wizard: %w", err)
 			}
-		} else if stdinHasData() {
+		} else {
 			// Piped input — auto-detect stdin connector.
 			cfg.Connector.Provider = "stdin"
 			cfg.Mode = "stream"
-		} else {
-			// Not a TTY, no pipe — print usage hint and exit.
-			fmt.Fprintf(os.Stderr, "No connector configured. Run interactively for setup wizard, or use:\n")
-			fmt.Fprintf(os.Stderr, "  lumber -connector stdin       (pipe logs via stdin)\n")
-			fmt.Fprintf(os.Stderr, "  lumber -connector file -file PATH\n")
-			fmt.Fprintf(os.Stderr, "  lumber -connector vercel      (+ LUMBER_API_KEY)\n")
-			os.Exit(1)
 		}
 	}
 
@@ -80,21 +84,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Download with: make download-model && make download-ort\n")
 			fmt.Fprintf(os.Stderr, "Or set LUMBER_MODEL_PATH, LUMBER_VOCAB_PATH, LUMBER_PROJECTION_PATH\n")
 		}
-		os.Exit(1)
+		return fmt.Errorf("model files not found")
 	}
 
-	logging.Init(cfg.Output.Format == "stdout", logging.ParseLevel(cfg.LogLevel))
-
 	if err := cfg.Validate(); err != nil {
-		slog.Error("invalid configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Initialize embedder.
 	emb, err := embedder.New(cfg.Engine.ModelPath, cfg.Engine.VocabPath, cfg.Engine.ProjectionPath)
 	if err != nil {
-		slog.Error("failed to create embedder", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("creating embedder: %w", err)
 	}
 	defer emb.Close()
 	slog.Info("embedder loaded", "model", cfg.Engine.ModelPath, "dim", emb.EmbedDim())
@@ -103,20 +103,19 @@ func main() {
 	t0 := time.Now()
 	tax, err := taxonomy.New(taxonomy.DefaultRoots(), emb)
 	if err != nil {
-		slog.Error("failed to create taxonomy", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("creating taxonomy: %w", err)
 	}
 	slog.Info("taxonomy pre-embedded", "labels", len(tax.Labels()), "duration", time.Since(t0).Round(time.Millisecond))
 
 	// Initialize classifier and compactor.
+	verbosity := parseVerbosity(cfg.Engine.Verbosity)
 	cls := classifier.New(cfg.Engine.ConfidenceThreshold)
-	cmp := compactor.New(parseVerbosity(cfg.Engine.Verbosity))
+	cmp := compactor.New(verbosity)
 
 	// Initialize engine.
 	eng := engine.New(emb, tax, cls, cmp)
 
 	// Initialize output(s).
-	verbosity := parseVerbosity(cfg.Engine.Verbosity)
 	var outputs []output.Output
 	outputs = append(outputs, stdout.New(verbosity, cfg.Output.Pretty))
 
@@ -127,8 +126,7 @@ func main() {
 		}
 		f, err := file.New(cfg.Output.FilePath, verbosity, fileOpts...)
 		if err != nil {
-			slog.Error("failed to create file output", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("creating file output: %w", err)
 		}
 		outputs = append(outputs, async.New(f))
 		slog.Info("file output enabled", "path", cfg.Output.FilePath)
@@ -141,7 +139,7 @@ func main() {
 		}
 		wh := webhook.New(cfg.Output.WebhookURL, whOpts...)
 		outputs = append(outputs, async.New(wh, async.WithDropOnFull()))
-		slog.Info("webhook output enabled", "url", cfg.Output.WebhookURL)
+		slog.Info("webhook output enabled", "url", redactURL(cfg.Output.WebhookURL))
 	}
 
 	out := multi.New(outputs...)
@@ -149,8 +147,7 @@ func main() {
 	// Resolve connector.
 	ctor, err := connector.Get(cfg.Connector.Provider)
 	if err != nil {
-		slog.Error("failed to get connector", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("getting connector: %w", err)
 	}
 	conn := ctor()
 
@@ -210,16 +207,16 @@ func main() {
 			Limit: cfg.QueryLimit,
 		}
 		if err := p.Query(ctx, connCfg, params); err != nil {
-			slog.Error("query failed", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("query failed: %w", err)
 		}
 	default: // "stream"
 		slog.Info("starting stream", "connector", cfg.Connector.Provider)
-		if err := p.Stream(ctx, connCfg); err != nil && err != context.Canceled {
-			slog.Error("pipeline error", "error", err)
-			os.Exit(1)
+		if err := p.Stream(ctx, connCfg); err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("pipeline error: %w", err)
 		}
 	}
+
+	return nil
 }
 
 func parseVerbosity(s string) compactor.Verbosity {
@@ -242,11 +239,15 @@ func isTerminal(f *os.File) bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-// stdinHasData reports whether stdin is a pipe with data (not a TTY).
-func stdinHasData() bool {
-	stat, err := os.Stdin.Stat()
+// redactURL removes query parameters from a URL for safe logging.
+// Returns the original string if parsing fails.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
 	if err != nil {
-		return false
+		return raw
 	}
-	return (stat.Mode() & os.ModeCharDevice) == 0
+	if u.RawQuery != "" {
+		u.RawQuery = "REDACTED"
+	}
+	return u.String()
 }

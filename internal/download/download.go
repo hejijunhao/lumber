@@ -15,7 +15,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
+
+// httpClient is the shared HTTP client with a timeout for download operations.
+var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
 // ModelFile describes a file to download with its expected checksum.
 type ModelFile struct {
@@ -103,8 +107,8 @@ func DownloadORT(destDir string) error {
 	}
 
 	dest := filepath.Join(destDir, libName)
-	if _, err := os.Stat(dest); err == nil {
-		return nil // already exists
+	if fi, err := os.Stat(dest); err == nil && fi.Size() > 0 {
+		return nil // already exists and non-empty
 	}
 
 	archiveName := fmt.Sprintf("onnxruntime-%s-%s", archSuffix, ORTVersion)
@@ -117,7 +121,7 @@ func DownloadORT(destDir string) error {
 
 // downloadAndExtractORT downloads a .tgz archive and extracts the ORT library from it.
 func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return fmt.Errorf("downloading ORT: %w", err)
 	}
@@ -165,7 +169,11 @@ func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 			continue
 		}
 
+		// Guard against path traversal in tar entries.
 		dest := filepath.Join(destDir, libName)
+		if !strings.HasPrefix(filepath.Clean(dest), filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("ORT archive contains path traversal: %s", hdr.Name)
+		}
 		if err := AtomicWriteFromReader(dest, tr); err != nil {
 			return fmt.Errorf("extracting ORT library: %w", err)
 		}
@@ -202,7 +210,7 @@ func DownloadFile(url, dest, expectedSHA256 string) error {
 		return err
 	}
 
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -293,5 +301,5 @@ func DefaultCacheDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot determine cache directory: %w", err)
 	}
-	return base + "/lumber", nil
+	return filepath.Join(base, "lumber"), nil
 }

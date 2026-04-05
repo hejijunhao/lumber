@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.10.2](#0102--2026-04-05) — Production-readiness hardening: HTTP timeouts, path-traversal guard, run() refactor, context respect, input validation, NO_COLOR
 - [0.10.1](#0101--2026-04-05) — Post-review fixes: context leak, dead GOOS check, silent parse error, filepath.Dir, stdlib helpers, scanner error logging
 - [0.10.0](#0100--2026-04-05) — Interactive CLI: setup wizard, stdin/file connectors, download extraction, config validation, auto-detect piped input
 - [0.9.1](#091--2026-04-02) — Library bootstrap: auto-download models + ORT on first use, OS-aware cache, `WithAutoDownload()` API
@@ -22,6 +23,51 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.10.2 — 2026-04-05
+
+**Production-readiness hardening (Phase 10, Section 13)**
+
+Systematic review and fix pass across all Phase 10 code. Eighteen issues identified, sixteen fixed across seven files. Addresses resource leaks, security gaps, silent failures, dead code, and missing input validation. No breaking changes to public API.
+
+### Fixed
+
+- **HTTP downloads hang forever** — `http.Get` (default client, no timeout) replaced with a shared `httpClient` with 5-minute timeout in `internal/download/download.go`. Affects both model file and ORT library downloads.
+- **Tar path-traversal in ORT extraction** — `downloadAndExtractORT` did not validate that resolved output paths stay within `destDir`. A crafted archive with `../` entries could write outside the extraction directory. Added `filepath.Clean` + `strings.HasPrefix` guard before extraction.
+- **Zero-byte ORT cache bypass** — `DownloadORT` checked `os.Stat(dest)` for existence only. A zero-byte file from a partial/interrupted download permanently prevented re-download. Now checks `fi.Size() > 0`.
+- **`os.Exit` bypasses cleanup in `main.go`** — Error paths called `os.Exit(1)` directly, skipping all `defer` statements (embedder close, pipeline flush, output drain). Refactored into `run() error` pattern: `main()` calls `os.Exit` exactly once, after all defers execute.
+- **`err != context.Canceled` direct comparison** — `p.Stream` error check used `!=` which breaks if the error is wrapped. Replaced with `!errors.Is(err, context.Canceled)`.
+- **`os.IsNotExist` misses permission errors** — `ModelsReady` in `wizard.go` and the file-path validator treated permission-denied errors as "file exists." Changed to `err != nil` so any stat failure (permissions, broken symlink) correctly reports the file as inaccessible.
+- **File connector `Query` ignores context** — `context.Context` parameter was discarded (`_`). With `Limit == 0`, `Query` read the entire file into memory with no cancellation or memory bound. Now checks `ctx.Done()` in the scan loop and applies a default cap of 100,000 lines when no explicit limit is set.
+- **No `from < to` validation in wizard** — `promptQueryRange` accepted reversed time ranges (to before from), producing zero-result or erroring queries. Added validation that `from` must precede `to`.
+- **Dead `stdinHasData` branch** — `stdinHasData()` was always true when reached (stdin already confirmed non-TTY by `isTerminal`). The else-branch (lines 63-69) was unreachable dead code. Removed `stdinHasData` function; non-TTY stdin now always auto-detects as pipe.
+- **`parseVerbosity` called twice** — Same string parsed into same type on lines 113 and 119 of `main.go`. Deduplicated into single call before both use sites.
+- **Logging before `logging.Init()`** — `slog.Error` in wizard block and model check used the default slog handler (plain text, different format than configured JSON handler). Moved `logging.Init()` before wizard/auto-detect block.
+- **Webhook URL logged verbatim** — URLs with auth tokens in query parameters (`?token=SECRET`) were logged to info. Added `redactURL()` that strips query params before logging.
+- **Weak webhook URL validation** — Both wizard and config validation used `strings.HasPrefix(s, "http://")` which accepted `http://` alone (no host). Replaced with `url.ParseRequestURI` + scheme + host checks in both `wizard.go` and `config.go`.
+- **Silent env var parse failures** — `getenvDuration`, `getenvInt`, `getenvFloat` in `config.go` silently returned fallback defaults on malformed values. A user setting `LUMBER_CONFIDENCE_THRESHOLD=abc` would get `0.5` with no indication. Now logs `slog.Warn` with key, value, default, and error.
+- **String concat in `DefaultCacheDir`** — `base + "/lumber"` replaced with `filepath.Join(base, "lumber")` for cross-platform correctness.
+- **Sentinel errors as inline strings** — `"wizard cancelled by user"` and `"model download declined"` were `fmt.Errorf` strings, preventing `errors.Is` checking by callers. Extracted to package-level `var ErrWizardCancelled` and `var ErrModelDownloadDeclined`.
+- **No `NO_COLOR` support** — CLI styles unconditionally emitted ANSI escape sequences. Added `NO_COLOR` env var detection per no-color.org; when set, all lipgloss styling is bypassed via a `render()` helper.
+
+### Deferred
+
+- **ORT library checksum verification** — Model files have SHA256 verification but ORT does not. Requires running actual downloads on each platform to capture hash values. Tracked for next release.
+
+### Files changed
+
+| File | Action | What |
+|------|--------|------|
+| `internal/download/download.go` | modified | HTTP timeout, path-traversal guard, ORT cache size check, `filepath.Join` |
+| `cmd/lumber/main.go` | modified | `run()` refactor, `errors.Is`, removed dead code, deduplicated verbosity, early logging init, URL redaction |
+| `internal/cli/wizard.go` | modified | `err != nil` stat checks, `from < to` validation, sentinel errors, stronger URL validation, `render()` for styles |
+| `internal/cli/style.go` | modified | `NO_COLOR` support via `render()` helper |
+| `internal/connector/file/file.go` | modified | `Query` respects context, default limit cap |
+| `internal/config/config.go` | modified | Stronger webhook URL validation, env var parse warnings, version bump |
+
+**New files: 0. Modified files: 6. Total: 6.**
 
 ---
 

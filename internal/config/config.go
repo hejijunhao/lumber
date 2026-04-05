@@ -3,6 +3,8 @@ package config
 import (
 	"flag"
 	"fmt"
+	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,7 +14,7 @@ import (
 
 // Version is the current Lumber release version.
 // Set at build time via: go build -ldflags "-X github.com/kaminocorp/lumber/internal/config.Version=X.Y.Z"
-var Version = "0.10.1"
+var Version = "0.10.2"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -247,10 +249,11 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// Webhook URL must be parseable if set.
+	// Webhook URL must be a valid HTTP(S) URL with a host.
 	if c.Output.WebhookURL != "" {
-		if !strings.HasPrefix(c.Output.WebhookURL, "http://") && !strings.HasPrefix(c.Output.WebhookURL, "https://") {
-			errs = append(errs, fmt.Sprintf("invalid webhook URL %q (must start with http:// or https://)", c.Output.WebhookURL))
+		u, err := url.ParseRequestURI(c.Output.WebhookURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Sprintf("invalid webhook URL %q (must be a valid http:// or https:// URL with a host)", c.Output.WebhookURL))
 		}
 	}
 
@@ -322,6 +325,7 @@ func getenvDuration(key string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		slog.Warn("invalid env var value, using default", "key", key, "value", v, "default", fallback, "error", err)
 		return fallback
 	}
 	return d
@@ -334,6 +338,7 @@ func getenvInt(key string, fallback int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
+		slog.Warn("invalid env var value, using default", "key", key, "value", v, "default", fallback, "error", err)
 		return fallback
 	}
 	return n
@@ -346,6 +351,7 @@ func getenvFloat(key string, fallback float64) float64 {
 	}
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil {
+		slog.Warn("invalid env var value, using default", "key", key, "value", v, "default", fallback, "error", err)
 		return fallback
 	}
 	return f

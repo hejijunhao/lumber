@@ -13,8 +13,13 @@ import (
 	"github.com/kaminocorp/lumber/internal/model"
 )
 
-// maxLineSize is the maximum line length the scanner will accept (1MB).
-const maxLineSize = 1024 * 1024
+const (
+	// maxLineSize is the maximum line length the scanner will accept (1MB).
+	maxLineSize = 1024 * 1024
+	// defaultQueryLimit caps Query results when no explicit limit is set,
+	// preventing unbounded memory allocation on large files.
+	defaultQueryLimit = 100_000
+)
 
 func init() {
 	connector.Register("file", func() connector.Connector {
@@ -75,9 +80,10 @@ func (c *Connector) Stream(ctx context.Context, cfg connector.ConnectorConfig) (
 }
 
 // Query reads lines from the file, returning up to params.Limit results.
-// Start/End time filters are not applicable to file lines (they have no
-// inherent timestamp) and are ignored.
-func (c *Connector) Query(_ context.Context, cfg connector.ConnectorConfig, params connector.QueryParams) ([]model.RawLog, error) {
+// When Limit is 0, a default cap of 100,000 lines is applied to prevent
+// unbounded memory allocation. Start/End time filters are not applicable
+// to file lines (they have no inherent timestamp) and are ignored.
+func (c *Connector) Query(ctx context.Context, cfg connector.ConnectorConfig, params connector.QueryParams) ([]model.RawLog, error) {
 	filePath, err := resolveFilePath(cfg)
 	if err != nil {
 		return nil, err
@@ -93,11 +99,23 @@ func (c *Connector) Query(_ context.Context, cfg connector.ConnectorConfig, para
 		slog.Debug("file connector: time range filters ignored (file lines have no inherent timestamp)")
 	}
 
+	limit := params.Limit
+	if limit <= 0 {
+		limit = defaultQueryLimit
+	}
+
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, maxLineSize), maxLineSize)
 
 	var results []model.RawLog
 	for scanner.Scan() {
+		// Check for context cancellation periodically.
+		select {
+		case <-ctx.Done():
+			return results, ctx.Err()
+		default:
+		}
+
 		line := scanner.Text()
 		if line == "" {
 			continue
@@ -110,7 +128,7 @@ func (c *Connector) Query(_ context.Context, cfg connector.ConnectorConfig, para
 				"file": filepath.Base(filePath),
 			},
 		})
-		if params.Limit > 0 && len(results) >= params.Limit {
+		if len(results) >= limit {
 			break
 		}
 	}
