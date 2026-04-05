@@ -591,8 +591,8 @@ func TestValidate_FileConnectorValidatesFileExists(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for file connector with nonexistent file")
 	}
-	if !strings.Contains(err.Error(), "log file not found") {
-		t.Fatalf("expected error to mention 'log file not found', got: %v", err)
+	if !strings.Contains(err.Error(), "log file not accessible") {
+		t.Fatalf("expected error to mention 'log file not accessible', got: %v", err)
 	}
 }
 

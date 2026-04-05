@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.10.4](#0104--2026-04-05) — Production review: signal handler defer safety, async drain race, Intel Mac support, config validation hardening
 - [0.10.3](#0103--2026-04-05) — Pre-production review fixes: nil deref in URL validation, goroutine leak, credential redaction, signal handler leak, config validation gaps
 - [0.10.2](#0102--2026-04-05) — Production-readiness hardening: HTTP timeouts, path-traversal guard, run() refactor, context respect, input validation, NO_COLOR
 - [0.10.1](#0101--2026-04-05) — Post-review fixes: context leak, dead GOOS check, silent parse error, filepath.Dir, stdlib helpers, scanner error logging
@@ -24,6 +25,39 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.10.4 — 2026-04-05
+
+**Production review fixes (Phase 10, Section 15)**
+
+Nine issues identified in a comprehensive production-readiness review, all fixed. Addresses resource leaks on forced shutdown, a race condition in async output drain, missing platform support, dead code, and config validation gaps. No breaking changes to public API.
+
+### Fixed
+
+- **Signal handler `os.Exit(1)` bypassing all defers** — The second-signal and shutdown-timeout paths in `main.go` called `os.Exit(1)` from a goroutine, which skipped all `defer` statements in `run()`: embedder ONNX session close, pipeline flush, file handle cleanup, and async output drain. Refactored to use a `forceExit` channel: the signal goroutine sends an exit code, `run()` selects on it alongside pipeline completion, and returns normally so defers execute before `main()` calls `os.Exit`. Pipeline now runs in its own goroutine with results communicated via `pipelineDone` channel.
+- **Async output `Close()`/`Write()` race on drain timeout** — When the 5-second drain timeout fired, `Close()` called `inner.Close()` while the drain goroutine was potentially still blocked in `inner.Write()`. This caused a race between closing and writing to the same file handle or HTTP client. Added a `quit` channel: after timeout, the drain goroutine is signaled to stop issuing new writes, given 500ms to exit, then `inner.Close()` proceeds safely.
+- **Missing `darwin-amd64` (Intel Mac) in ORT auto-download** — `OrtPlatform()` only supported `linux-amd64`, `linux-arm64`, and `darwin-arm64`. Intel Mac users hit an error during the setup wizard. Added `darwin-amd64 → osx-x86_64` mapping.
+- **Dead path-traversal guard in ORT extraction** — The traversal check at `download.go:172` validated `filepath.Join(destDir, libName)` where `libName` is always a hardcoded constant (`"libonnxruntime.dylib"` or `"libonnxruntime.so"`). The check could never fail, giving a false sense of security. Removed the dead check; the extraction is inherently safe because it always writes to the fixed destination path, never to `hdr.Name`.
+- **HTTP response body not drained on error** — `downloadAndExtractORT()` and `DownloadFile()` deferred `resp.Body.Close()` on non-200 status but did not drain the body, preventing Go's HTTP connection pool from reusing connections. Added `io.Copy(io.Discard, resp.Body)` before error returns on both paths.
+- **`os.IsNotExist` missing permission errors in config validation** — `Validate()` used `os.IsNotExist(err)` for file connector path, model file, and output directory checks. Files that exist but are unreadable (permission denied, broken symlink) passed validation, producing confusing errors at runtime. Changed all three sites to `err != nil` with descriptive error messages including the underlying OS error.
+- **Wizard error types not distinguished** — All `huh.Form.Run()` errors were wrapped as `"wizard cancelled: %w"` regardless of cause, making it impossible to distinguish user cancellation (Ctrl+C) from real errors. Added `wrapFormError()` helper that checks `huh.ErrUserAborted` and wraps with `ErrWizardCancelled` sentinel for user-initiated exits, or `"wizard error"` for unexpected failures.
+- **`MaxBufferSize` accepted negative values** — `getenvInt` parsed negative values without complaint, and `Validate()` had no check. A typo like `LUMBER_MAX_BUFFER_SIZE=-100` silently became "unlimited." Added non-negative validation in `Validate()`.
+- **Version bump** — `0.10.3` → `0.10.4`.
+
+### Files changed
+
+| File | Action | What |
+|------|--------|------|
+| `cmd/lumber/main.go` | modified | `run()` returns `(int, error)`, `forceExit` channel replaces `os.Exit` in signal goroutine, pipeline runs in goroutine, `signal.Stop` cleanup |
+| `internal/output/async/async.go` | modified | `quit` channel for drain goroutine lifecycle, timeout-safe `Close()` |
+| `internal/download/download.go` | modified | `darwin-amd64` support, removed dead path-traversal check, HTTP body drain on error |
+| `internal/config/config.go` | modified | `err != nil` replaces `os.IsNotExist`, `MaxBufferSize` validation, version bump |
+| `internal/config/config_test.go` | modified | Updated error message assertion for file connector |
+| `internal/cli/wizard.go` | modified | `wrapFormError()` with `huh.ErrUserAborted` detection |
+
+**New files: 0. Modified files: 6. Total: 6.**
 
 ---
 

@@ -38,18 +38,19 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	code, err := run()
+	if err != nil {
 		slog.Error("fatal", "error", err)
-		os.Exit(1)
 	}
+	os.Exit(code)
 }
 
-func run() error {
+func run() (int, error) {
 	cfg := config.LoadWithFlags()
 
 	if cfg.ShowVersion {
 		fmt.Printf("lumber %s\n", config.Version)
-		return nil
+		return 0, nil
 	}
 
 	// Print startup banner to stderr (doesn't mix with NDJSON on stdout).
@@ -65,7 +66,7 @@ func run() error {
 			var err error
 			cfg, err = cli.RunWizard(cfg)
 			if err != nil {
-				return fmt.Errorf("wizard: %w", err)
+				return 1, fmt.Errorf("wizard: %w", err)
 			}
 		} else {
 			// Piped input — auto-detect stdin connector.
@@ -84,17 +85,17 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "Download with: make download-model && make download-ort\n")
 			fmt.Fprintf(os.Stderr, "Or set LUMBER_MODEL_PATH, LUMBER_VOCAB_PATH, LUMBER_PROJECTION_PATH\n")
 		}
-		return fmt.Errorf("model files not found")
+		return 1, fmt.Errorf("model files not found")
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
+		return 1, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Initialize embedder.
 	emb, err := embedder.New(cfg.Engine.ModelPath, cfg.Engine.VocabPath, cfg.Engine.ProjectionPath)
 	if err != nil {
-		return fmt.Errorf("creating embedder: %w", err)
+		return 1, fmt.Errorf("creating embedder: %w", err)
 	}
 	defer emb.Close()
 	slog.Info("embedder loaded", "model", cfg.Engine.ModelPath, "dim", emb.EmbedDim())
@@ -103,7 +104,7 @@ func run() error {
 	t0 := time.Now()
 	tax, err := taxonomy.New(taxonomy.DefaultRoots(), emb)
 	if err != nil {
-		return fmt.Errorf("creating taxonomy: %w", err)
+		return 1, fmt.Errorf("creating taxonomy: %w", err)
 	}
 	slog.Info("taxonomy pre-embedded", "labels", len(tax.Labels()), "duration", time.Since(t0).Round(time.Millisecond))
 
@@ -126,7 +127,7 @@ func run() error {
 		}
 		f, err := file.New(cfg.Output.FilePath, verbosity, fileOpts...)
 		if err != nil {
-			return fmt.Errorf("creating file output: %w", err)
+			return 1, fmt.Errorf("creating file output: %w", err)
 		}
 		outputs = append(outputs, async.New(f))
 		slog.Info("file output enabled", "path", cfg.Output.FilePath)
@@ -147,7 +148,7 @@ func run() error {
 	// Resolve connector.
 	ctor, err := connector.Get(cfg.Connector.Provider)
 	if err != nil {
-		return fmt.Errorf("getting connector: %w", err)
+		return 1, fmt.Errorf("getting connector: %w", err)
 	}
 	conn := ctor()
 
@@ -165,10 +166,13 @@ func run() error {
 	defer p.Close()
 
 	// Set up graceful shutdown.
+	// forceExit is used by the signal handler to tell run() to return immediately
+	// (with defers executing) instead of calling os.Exit from a goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigCh := make(chan os.Signal, 2) // buffer 2 to catch second signal
+	forceExit := make(chan int, 1)
+	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -187,14 +191,15 @@ func run() error {
 		select {
 		case sig := <-sigCh:
 			slog.Warn("second signal, forcing exit", "signal", sig)
-			os.Exit(1)
+			forceExit <- 1
 		case <-timer.C:
 			slog.Error("shutdown timeout exceeded, forcing exit", "timeout", cfg.ShutdownTimeout)
-			os.Exit(1)
+			forceExit <- 1
 		case <-shutdownDone:
 			return
 		}
 	}()
+	defer func() { signal.Stop(sigCh) }()
 
 	// Start pipeline.
 	connCfg := connector.ConnectorConfig{
@@ -204,29 +209,39 @@ func run() error {
 		Extra:    cfg.Connector.Extra,
 	}
 
-	switch cfg.Mode {
-	case "query":
-		slog.Info("starting query", "connector", cfg.Connector.Provider,
-			"from", cfg.QueryFrom, "to", cfg.QueryTo, "limit", cfg.QueryLimit)
-		params := connector.QueryParams{
-			Start: cfg.QueryFrom,
-			End:   cfg.QueryTo,
-			Limit: cfg.QueryLimit,
+	// pipelineDone communicates the pipeline result back from the goroutine.
+	pipelineDone := make(chan error, 1)
+	go func() {
+		switch cfg.Mode {
+		case "query":
+			slog.Info("starting query", "connector", cfg.Connector.Provider,
+				"from", cfg.QueryFrom, "to", cfg.QueryTo, "limit", cfg.QueryLimit)
+			params := connector.QueryParams{
+				Start: cfg.QueryFrom,
+				End:   cfg.QueryTo,
+				Limit: cfg.QueryLimit,
+			}
+			pipelineDone <- p.Query(ctx, connCfg, params)
+		default: // "stream"
+			slog.Info("starting stream", "connector", cfg.Connector.Provider)
+			pipelineDone <- p.Stream(ctx, connCfg)
 		}
-		if err := p.Query(ctx, connCfg, params); err != nil {
-			close(shutdownDone)
-			return fmt.Errorf("query failed: %w", err)
-		}
-	default: // "stream"
-		slog.Info("starting stream", "connector", cfg.Connector.Provider)
-		if err := p.Stream(ctx, connCfg); err != nil && !errors.Is(err, context.Canceled) {
-			close(shutdownDone)
-			return fmt.Errorf("pipeline error: %w", err)
-		}
-	}
+	}()
 
-	close(shutdownDone)
-	return nil
+	// Wait for pipeline completion or forced exit.
+	select {
+	case err := <-pipelineDone:
+		close(shutdownDone)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return 1, fmt.Errorf("pipeline error: %w", err)
+		}
+		return 0, nil
+	case code := <-forceExit:
+		// Signal handler requested immediate exit. Return so defers can run
+		// (embedder close, pipeline close, etc.) before main() calls os.Exit.
+		close(shutdownDone)
+		return code, fmt.Errorf("forced shutdown")
+	}
 }
 
 func parseVerbosity(s string) compactor.Verbosity {

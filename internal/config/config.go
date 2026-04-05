@@ -14,7 +14,7 @@ import (
 
 // Version is the current Lumber release version.
 // Set at build time via: go build -ldflags "-X github.com/kaminocorp/lumber/internal/config.Version=X.Y.Z"
-var Version = "0.10.3"
+var Version = "0.10.4"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -191,24 +191,24 @@ func (c Config) Validate() error {
 		errs = append(errs, "LUMBER_API_KEY is required for cloud connectors")
 	}
 
-	// File connector requires a valid file path.
+	// File connector requires a valid, accessible file path.
 	if c.Connector.Provider == "file" {
 		filePath := c.Connector.Extra["file"]
 		if filePath == "" {
 			errs = append(errs, "file path is required for file connector (-file flag or LUMBER_FILE_PATH)")
-		} else if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			errs = append(errs, fmt.Sprintf("log file not found: %s", filePath))
+		} else if _, err := os.Stat(filePath); err != nil {
+			errs = append(errs, fmt.Sprintf("log file not accessible: %s (%s)", filePath, err))
 		}
 	}
 
-	// Model files must exist on disk.
+	// Model files must exist and be accessible on disk.
 	for _, f := range []struct{ name, path string }{
 		{"model", c.Engine.ModelPath},
 		{"vocab", c.Engine.VocabPath},
 		{"projection", c.Engine.ProjectionPath},
 	} {
-		if _, err := os.Stat(f.path); os.IsNotExist(err) {
-			errs = append(errs, fmt.Sprintf("%s file not found: %s", f.name, f.path))
+		if _, err := os.Stat(f.path); err != nil {
+			errs = append(errs, fmt.Sprintf("%s file not accessible: %s (%s)", f.name, f.path, err))
 		}
 	}
 
@@ -234,6 +234,11 @@ func (c Config) Validate() error {
 	// Dedup window non-negative.
 	if c.Engine.DedupWindow < 0 {
 		errs = append(errs, fmt.Sprintf("dedup window must be non-negative, got %s", c.Engine.DedupWindow))
+	}
+
+	// Buffer size non-negative.
+	if c.Engine.MaxBufferSize < 0 {
+		errs = append(errs, fmt.Sprintf("max buffer size must be non-negative, got %d", c.Engine.MaxBufferSize))
 	}
 
 	// Mode enum.
@@ -269,12 +274,12 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// File output parent directory must exist if set.
+	// File output parent directory must exist and be accessible.
 	if c.Output.FilePath != "" {
 		dir := filepath.Dir(c.Output.FilePath)
 		if dir != "." && dir != "" {
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				errs = append(errs, fmt.Sprintf("output file directory does not exist: %s", dir))
+			if _, err := os.Stat(dir); err != nil {
+				errs = append(errs, fmt.Sprintf("output file directory not accessible: %s (%s)", dir, err))
 			}
 		}
 	}

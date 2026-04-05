@@ -50,7 +50,7 @@ func RunWizard(base config.Config) (config.Config, error) {
 		),
 	).Run()
 	if err != nil {
-		return cfg, fmt.Errorf("wizard cancelled: %w", err)
+		return cfg, wrapFormError(err)
 	}
 
 	if source == "local" {
@@ -120,7 +120,7 @@ func promptModelDownload(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 
 	if !shouldDownload {
@@ -179,7 +179,7 @@ func promptLocalSource(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 
 	if localSource == "file" {
@@ -202,7 +202,7 @@ func promptLocalSource(cfg *config.Config) error {
 			),
 		).Run()
 		if err != nil {
-			return fmt.Errorf("wizard cancelled: %w", err)
+			return wrapFormError(err)
 		}
 
 		cfg.Connector.Provider = "file"
@@ -249,7 +249,7 @@ func promptCloudSource(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 
 	cfg.Connector.Provider = provider
@@ -286,7 +286,7 @@ func promptVercelExtras(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 	if projectID != "" {
 		cfg.Connector.Extra["project_id"] = projectID
@@ -313,7 +313,7 @@ func promptFlyioExtras(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 	cfg.Connector.Extra["app_name"] = appName
 	return nil
@@ -335,7 +335,7 @@ func promptSupabaseExtras(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 	cfg.Connector.Extra["project_ref"] = projectRef
 	return nil
@@ -367,7 +367,7 @@ func promptOutputOptions(cfg *config.Config, source string) error {
 
 	err := huh.NewForm(huh.NewGroup(fields...)).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 
 	cfg.Engine.Verbosity = verbosity
@@ -384,7 +384,7 @@ func promptOutputOptions(cfg *config.Config, source string) error {
 			),
 		).Run()
 		if err != nil {
-			return fmt.Errorf("wizard cancelled: %w", err)
+			return wrapFormError(err)
 		}
 		if outputFilePath == "" {
 			outputFilePath = "lumber-output.ndjson"
@@ -414,7 +414,7 @@ func promptOutputOptions(cfg *config.Config, source string) error {
 			),
 		).Run()
 		if err != nil {
-			return fmt.Errorf("wizard cancelled: %w", err)
+			return wrapFormError(err)
 		}
 		cfg.Output.WebhookURL = webhookURL
 	}
@@ -434,7 +434,7 @@ func promptOutputOptions(cfg *config.Config, source string) error {
 			),
 		).Run()
 		if err != nil {
-			return fmt.Errorf("wizard cancelled: %w", err)
+			return wrapFormError(err)
 		}
 		cfg.Mode = mode
 
@@ -475,7 +475,7 @@ func promptQueryRange(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 	var parseErr error
 	cfg.QueryFrom, parseErr = time.Parse(time.RFC3339, from)
@@ -508,12 +508,21 @@ func promptSummary(cfg *config.Config) error {
 		),
 	).Run()
 	if err != nil {
-		return fmt.Errorf("wizard cancelled: %w", err)
+		return wrapFormError(err)
 	}
 	if !confirmed {
 		return ErrWizardCancelled
 	}
 	return nil
+}
+
+// wrapFormError distinguishes user-initiated cancellation (Ctrl+C / Esc)
+// from unexpected form errors, wrapping the former with ErrWizardCancelled.
+func wrapFormError(err error) error {
+	if errors.Is(err, huh.ErrUserAborted) {
+		return fmt.Errorf("%w: %w", ErrWizardCancelled, err)
+	}
+	return fmt.Errorf("wizard error: %w", err)
 }
 
 func buildSummary(cfg *config.Config) string {

@@ -91,6 +91,8 @@ func OrtPlatform() (archiveSuffix, libName string, err error) {
 		return "linux-x64", "libonnxruntime.so", nil
 	case "linux-arm64":
 		return "linux-aarch64", "libonnxruntime.so", nil
+	case "darwin-amd64":
+		return "osx-x86_64", "libonnxruntime.dylib", nil
 	case "darwin-arm64":
 		return "osx-arm64", "libonnxruntime.dylib", nil
 	default:
@@ -128,6 +130,7 @@ func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("downloading ORT: HTTP %d", resp.StatusCode)
 	}
 
@@ -169,11 +172,8 @@ func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 			continue
 		}
 
-		// Guard against path traversal in tar entries.
+		// Extract to a fixed destination path (not hdr.Name) to avoid path traversal.
 		dest := filepath.Join(destDir, libName)
-		if !strings.HasPrefix(filepath.Clean(dest), filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("ORT archive contains path traversal: %s", hdr.Name)
-		}
 		if err := AtomicWriteFromReader(dest, tr); err != nil {
 			return fmt.Errorf("extracting ORT library: %w", err)
 		}
@@ -217,6 +217,7 @@ func DownloadFile(url, dest, expectedSHA256 string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
 
