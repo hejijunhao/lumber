@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,7 +16,7 @@ import (
 
 // Version is the current Lumber release version.
 // Set at build time via: go build -ldflags "-X github.com/kaminocorp/lumber/internal/config.Version=X.Y.Z"
-var Version = "0.10.5"
+var Version = "0.10.6"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -82,11 +84,12 @@ func Load() Config {
 			MaxBufferSize:       getenvInt("LUMBER_MAX_BUFFER_SIZE", 1000),
 		},
 		Output: OutputConfig{
-			Format:      getenv("LUMBER_OUTPUT", "stdout"),
-			Pretty:      getenvBool("LUMBER_OUTPUT_PRETTY", false),
-			FilePath:    os.Getenv("LUMBER_OUTPUT_FILE"),
-			FileMaxSize: int64(getenvInt("LUMBER_OUTPUT_FILE_MAX_SIZE", 0)),
-			WebhookURL:  os.Getenv("LUMBER_WEBHOOK_URL"),
+			Format:         getenv("LUMBER_OUTPUT", "stdout"),
+			Pretty:         getenvBool("LUMBER_OUTPUT_PRETTY", false),
+			FilePath:       os.Getenv("LUMBER_OUTPUT_FILE"),
+			FileMaxSize:    int64(getenvInt("LUMBER_OUTPUT_FILE_MAX_SIZE", 0)),
+			WebhookURL:     os.Getenv("LUMBER_WEBHOOK_URL"),
+			WebhookHeaders: loadWebhookHeaders(),
 		},
 	}
 }
@@ -212,8 +215,11 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// Confidence threshold in [0, 1].
-	if c.Engine.ConfidenceThreshold < 0 || c.Engine.ConfidenceThreshold > 1 {
+	// Confidence threshold must be a finite number in [0, 1].
+	// NaN comparisons are always false in IEEE 754, so check explicitly.
+	if math.IsNaN(c.Engine.ConfidenceThreshold) || math.IsInf(c.Engine.ConfidenceThreshold, 0) {
+		errs = append(errs, fmt.Sprintf("confidence threshold must be a finite number, got %f", c.Engine.ConfidenceThreshold))
+	} else if c.Engine.ConfidenceThreshold < 0 || c.Engine.ConfidenceThreshold > 1 {
 		errs = append(errs, fmt.Sprintf("confidence threshold must be 0-1, got %f", c.Engine.ConfidenceThreshold))
 	}
 
@@ -229,6 +235,21 @@ func (c Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		errs = append(errs, fmt.Sprintf("invalid log level %q (must be debug|info|warn|error)", c.LogLevel))
+	}
+
+	// Shutdown timeout non-negative.
+	if c.ShutdownTimeout < 0 {
+		errs = append(errs, fmt.Sprintf("shutdown timeout must be non-negative, got %s", c.ShutdownTimeout))
+	}
+
+	// Query limit non-negative.
+	if c.QueryLimit < 0 {
+		errs = append(errs, fmt.Sprintf("query limit must be non-negative, got %d", c.QueryLimit))
+	}
+
+	// File max size non-negative.
+	if c.Output.FileMaxSize < 0 {
+		errs = append(errs, fmt.Sprintf("output file max size must be non-negative, got %d", c.Output.FileMaxSize))
 	}
 
 	// Dedup window non-negative.
@@ -264,13 +285,16 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// Connector endpoint URL must be valid HTTPS (protects bearer token from cleartext leak).
+	// Connector endpoint URL must be a valid HTTP(S) URL.
+	// Warn when HTTP is used with an API key — bearer token would be sent in cleartext.
 	if c.Connector.Endpoint != "" {
 		u, err := url.ParseRequestURI(c.Connector.Endpoint)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("invalid connector endpoint %q: %s", c.Connector.Endpoint, err))
 		} else if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			errs = append(errs, fmt.Sprintf("invalid connector endpoint %q (must be a valid http:// or https:// URL with a host)", c.Connector.Endpoint))
+		} else if u.Scheme == "http" && c.Connector.APIKey != "" {
+			slog.Warn("connector endpoint uses HTTP with an API key — credentials will be sent in cleartext, use HTTPS in production", "endpoint", c.Connector.Endpoint)
 		}
 	}
 
@@ -334,6 +358,32 @@ func loadConnectorExtra() map[string]string {
 	return m
 }
 
+// loadWebhookHeaders reads env vars with the LUMBER_WEBHOOK_HEADER_ prefix
+// into a header map. For example, LUMBER_WEBHOOK_HEADER_AUTHORIZATION=Bearer token
+// becomes {"Authorization": "Bearer token"}.
+func loadWebhookHeaders() map[string]string {
+	const prefix = "LUMBER_WEBHOOK_HEADER_"
+	var m map[string]string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, prefix) {
+			continue
+		}
+		kv := strings.SplitN(env, "=", 2)
+		if len(kv) != 2 || kv[1] == "" {
+			continue
+		}
+		headerName := strings.ReplaceAll(kv[0][len(prefix):], "_", "-")
+		if headerName == "" {
+			continue
+		}
+		if m == nil {
+			m = make(map[string]string)
+		}
+		m[http.CanonicalHeaderKey(headerName)] = kv[1]
+	}
+	return m
+}
+
 func getenvBool(key string, fallback bool) bool {
 	v := os.Getenv(key)
 	if v == "" {
@@ -379,6 +429,11 @@ func getenvFloat(key string, fallback float64) float64 {
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil {
 		slog.Warn("invalid env var value, using default", "key", key, "value", v, "default", fallback, "error", err)
+		return fallback
+	}
+	// Reject non-finite values (NaN, +Inf, -Inf) that ParseFloat accepts.
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		slog.Warn("non-finite env var value, using default", "key", key, "value", v, "default", fallback)
 		return fallback
 	}
 	return f

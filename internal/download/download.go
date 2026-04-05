@@ -167,12 +167,13 @@ func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 		if !strings.HasPrefix(baseName, "libonnxruntime") {
 			continue
 		}
-		// Skip symlinks — we want the actual versioned file.
-		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+		// Only extract regular files — skip symlinks, hardlinks, directories,
+		// and special entries (char/block devices, FIFOs).
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		// Skip directories and tiny files (< 1MB is not the real library).
-		if hdr.Typeflag == tar.TypeDir || hdr.Size < 1_000_000 {
+		// Skip tiny files (< 1MB is not the real library).
+		if hdr.Size < 1_000_000 {
 			continue
 		}
 		// Guard against decompression bombs.
@@ -186,6 +187,11 @@ func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 		limited := io.LimitReader(tr, maxORTLibSize)
 		if err := AtomicWriteFromReader(dest, limited); err != nil {
 			return fmt.Errorf("extracting ORT library: %w", err)
+		}
+
+		// Ensure the library is readable and executable (required by dlopen on Linux).
+		if err := os.Chmod(dest, 0o755); err != nil {
+			return fmt.Errorf("setting ORT library permissions: %w", err)
 		}
 
 		// Verify the extracted file is at least 1MB (sanity check).

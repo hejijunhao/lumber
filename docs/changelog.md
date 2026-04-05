@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.10.6](#0106--2026-04-05) — NaN bypass in config validation, Flyio timestamp safety, HTTP cleartext warning, ORT library permissions, tar extraction filtering, negative value guards, webhook header env vars
 - [0.10.5](#0105--2026-04-05) — Comprehensive production review: ONNX thread safety, async wrapper rewrite, HTTP hardening, path injection fix, webhook concurrency, classifier tests
 - [0.10.4](#0104--2026-04-05) — Production review: signal handler defer safety, async drain race, Intel Mac support, config validation hardening
 - [0.10.3](#0103--2026-04-05) — Pre-production review fixes: nil deref in URL validation, goroutine leak, credential redaction, signal handler leak, config validation gaps
@@ -26,6 +27,42 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.10.6 — 2026-04-05
+
+**Final production review hardening (Phase 10, Section 17)**
+
+Comprehensive cross-subsystem review of the entire codebase (7 parallel review passes across all packages). Eight issues identified and fixed across four files. Addresses an IEEE 754 NaN validation bypass, silent data loss in timestamp parsing, a cleartext credential warning gap, Linux shared library permissions, and several config validation gaps. All 26 test packages pass. No breaking changes to public API.
+
+### Fixed
+
+- **NaN bypasses confidence threshold validation** — `strconv.ParseFloat("NaN", 64)` succeeds without error, and `NaN < 0` / `NaN > 1` are both false under IEEE 754 semantics, so `NaN` silently passed the `[0, 1]` range check in `Validate()`. The classifier would then never match any log line (all cosine similarities fail against NaN). Added explicit `math.IsNaN()` / `math.IsInf()` checks before the range check. Also hardened `getenvFloat()` to reject non-finite values at parse time, logging a warning and falling back to the default.
+
+- **Flyio timestamp parse error silently discarded** — `time.Parse(time.RFC3339Nano, ...)` error was assigned to `_`, producing a zero-value `time.Time` (year 0001) with no indication. Malformed timestamps from the Fly.io API were silently turned into obviously wrong dates that could confuse downstream consumers. Now logs a warning with the raw timestamp and error, and falls back to `time.Now()`.
+
+- **Misleading "HTTPS" comment but HTTP allowed for connector endpoints** — The comment on the connector endpoint validation said "must be valid HTTPS (protects bearer token from cleartext leak)" but the code accepted `http://`. When an API key is configured, sending it over HTTP leaks credentials in cleartext. Fixed the comment to match actual behavior (HTTP is allowed for local development), and added a `slog.Warn` when HTTP is used together with a non-empty API key so operators are alerted in production.
+
+- **`getenvFloat` accepts `NaN`, `Inf`, `-Inf`** — `strconv.ParseFloat` parses these special IEEE 754 values without returning an error. A user setting `LUMBER_CONFIDENCE_THRESHOLD=NaN` would silently get a non-finite threshold. Now rejects non-finite values with a warning and falls back to the default.
+
+- **Missing negative value validation for `ShutdownTimeout`, `QueryLimit`, `FileMaxSize`** — These fields accepted negative values without validation. A typo like `LUMBER_SHUTDOWN_TIMEOUT=-5s` would cause unexpected shutdown behavior, and a negative `FileMaxSize` would bypass rotation logic. Added non-negative checks in `Validate()` for all three fields.
+
+- **ORT shared library extracted without execute permission** — `AtomicWriteFromReader` creates temp files via `os.CreateTemp` (mode 0o600) then renames to the final path. On Linux, `dlopen()` requires execute permission on shared libraries. The extracted `libonnxruntime.so` lacked the execute bit, causing potential runtime failures on Linux deployments. Added `os.Chmod(dest, 0o755)` after extraction.
+
+- **Tar extraction did not filter by regular file type** — The ORT archive extraction skipped symlinks, hardlinks, and directories individually, but did not reject other special file types (char devices, block devices, FIFOs). Replaced the individual skip checks with a single `hdr.Typeflag != tar.TypeReg` guard that only extracts regular files.
+
+- **`WebhookHeaders` config field never populated from environment** — The `OutputConfig.WebhookHeaders` field existed and was wired in `main.go`, but no env var loading path populated it. Users could only set webhook headers via the `pkg/lumber` programmatic API. Added `LUMBER_WEBHOOK_HEADER_*` env var support: e.g., `LUMBER_WEBHOOK_HEADER_AUTHORIZATION="Bearer token"` becomes the `Authorization` header. Underscores in the suffix are converted to hyphens, and names are canonicalized via `http.CanonicalHeaderKey`.
+
+### Files changed
+
+| File | Action | What |
+|------|--------|------|
+| `internal/config/config.go` | modified | NaN/Inf validation in `Validate()` and `getenvFloat()`, negative value guards for ShutdownTimeout/QueryLimit/FileMaxSize, HTTP+API key warning, `loadWebhookHeaders()` helper, version bump |
+| `internal/connector/flyio/flyio.go` | modified | Timestamp parse error logged with `time.Now()` fallback |
+| `internal/download/download.go` | modified | `tar.TypeReg` filter, `os.Chmod(dest, 0o755)` after ORT extraction |
+
+**New files: 0. Modified files: 3. Total: 3.**
 
 ---
 

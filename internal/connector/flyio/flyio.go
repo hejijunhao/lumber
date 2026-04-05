@@ -51,7 +51,11 @@ type meta struct {
 }
 
 func toRawLog(w logWrapper) model.RawLog {
-	ts, _ := time.Parse(time.RFC3339Nano, w.Attributes.Timestamp)
+	ts, err := time.Parse(time.RFC3339Nano, w.Attributes.Timestamp)
+	if err != nil {
+		slog.Warn("failed to parse timestamp, using current time", "timestamp", w.Attributes.Timestamp, "error", err)
+		ts = time.Now()
+	}
 
 	md := map[string]any{
 		"level":    w.Attributes.Level,
