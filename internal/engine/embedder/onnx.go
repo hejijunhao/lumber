@@ -22,18 +22,28 @@ func ortLibraryName() string {
 }
 
 // ortEnv manages global ONNX Runtime initialization (process-wide singleton).
+// Uses a mutex instead of sync.Once so that a failed initialization can be
+// retried (e.g., with a corrected library path).
 var ortEnv struct {
-	once sync.Once
+	mu   sync.Mutex
+	done bool
 	err  error
 }
 
 // initORT initializes the ONNX Runtime environment. Safe to call multiple
-// times; only the first call has any effect.
+// times; only the first successful call has any effect. If initialization
+// fails, subsequent calls may retry with a different libPath.
 func initORT(libPath string) error {
-	ortEnv.once.Do(func() {
-		ort.SetSharedLibraryPath(libPath)
-		ortEnv.err = ort.InitializeEnvironment()
-	})
+	ortEnv.mu.Lock()
+	defer ortEnv.mu.Unlock()
+	if ortEnv.done {
+		return ortEnv.err
+	}
+	ort.SetSharedLibraryPath(libPath)
+	ortEnv.err = ort.InitializeEnvironment()
+	if ortEnv.err == nil {
+		ortEnv.done = true
+	}
 	return ortEnv.err
 }
 

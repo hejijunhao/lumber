@@ -63,6 +63,7 @@ type Output struct {
 	mu            sync.Mutex
 	pending       []model.CanonicalEvent
 	timer         *time.Timer
+	wg            sync.WaitGroup // tracks in-flight POST goroutines
 }
 
 // New creates a webhook output targeting the given URL.
@@ -106,21 +107,27 @@ func (o *Output) Write(_ context.Context, event model.CanonicalEvent) error {
 	return nil
 }
 
-// Close flushes any remaining events and stops the timer.
+// Close flushes any remaining events, stops the timer, and waits for
+// in-flight POST requests to complete.
 func (o *Output) Close() error {
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if o.timer != nil {
 		o.timer.Stop()
 		o.timer = nil
 	}
+	var err error
 	if len(o.pending) > 0 {
-		return o.flushLocked()
+		err = o.flushLocked()
 	}
-	return nil
+	o.mu.Unlock()
+
+	// Wait for all in-flight POST requests to complete.
+	o.wg.Wait()
+	return err
 }
 
-// flushLocked sends the pending batch via HTTP POST. Caller must hold o.mu.
+// flushLocked takes the pending batch under the lock, releases, and sends
+// via HTTP POST in the background. Caller must hold o.mu.
 func (o *Output) flushLocked() error {
 	if len(o.pending) == 0 {
 		return nil
@@ -131,17 +138,28 @@ func (o *Output) flushLocked() error {
 	}
 
 	batch := o.pending
-	o.pending = nil
+	o.pending = make([]model.CanonicalEvent, 0, o.batchSize)
 
 	body, err := json.Marshal(batch)
 	if err != nil {
 		return fmt.Errorf("webhook: marshal: %w", err)
 	}
 
-	return o.postWithRetry(body)
+	// Send the batch in a background goroutine so we don't hold the mutex
+	// during HTTP calls (which may include retry sleeps).
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		if err := o.postWithRetry(body); err != nil {
+			slog.Warn("webhook batch lost", "error", err, "events", len(batch))
+			o.errFunc(err)
+		}
+	}()
+
+	return nil
 }
 
-// postWithRetry sends the body via HTTP POST with retry on 5xx.
+// postWithRetry sends the body via HTTP POST with retry on 5xx and network errors.
 func (o *Output) postWithRetry(body []byte) error {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -160,7 +178,9 @@ func (o *Output) postWithRetry(body []byte) error {
 
 		resp, err := o.client.Do(req)
 		if err != nil {
-			return fmt.Errorf("webhook: %w", err)
+			// Retry network errors.
+			lastErr = fmt.Errorf("webhook: %w", err)
+			continue
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()

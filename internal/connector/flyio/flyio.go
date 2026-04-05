@@ -82,7 +82,7 @@ func (c *Connector) Query(ctx context.Context, cfg connector.ConnectorConfig, pa
 		baseURL = defaultEndpoint
 	}
 	client := httpclient.New(baseURL, cfg.APIKey)
-	path := "/api/v1/apps/" + appName + "/logs"
+	path := "/api/v1/apps/" + url.PathEscape(appName) + "/logs"
 
 	var results []model.RawLog
 	cursor := ""
@@ -135,7 +135,7 @@ func (c *Connector) Stream(ctx context.Context, cfg connector.ConnectorConfig) (
 		baseURL = defaultEndpoint
 	}
 	client := httpclient.New(baseURL, cfg.APIKey)
-	path := "/api/v1/apps/" + appName + "/logs"
+	path := "/api/v1/apps/" + url.PathEscape(appName) + "/logs"
 
 	pollInterval := defaultPollInterval
 	if raw := cfg.Extra["poll_interval"]; raw != "" {

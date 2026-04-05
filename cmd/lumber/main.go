@@ -145,6 +145,14 @@ func run() (int, error) {
 
 	out := multi.New(outputs...)
 
+	// Ensure async output goroutines are cleaned up if pipeline creation fails.
+	outputOwned := true
+	defer func() {
+		if outputOwned {
+			out.Close()
+		}
+	}()
+
 	// Resolve connector.
 	ctor, err := connector.Get(cfg.Connector.Provider)
 	if err != nil {
@@ -163,6 +171,7 @@ func run() (int, error) {
 		pipeOpts = append(pipeOpts, pipeline.WithMaxBufferSize(cfg.Engine.MaxBufferSize))
 	}
 	p := pipeline.New(conn, eng, out, pipeOpts...)
+	outputOwned = false // pipeline now owns the output via p.Close()
 	defer p.Close()
 
 	// Set up graceful shutdown.

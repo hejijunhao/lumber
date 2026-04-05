@@ -1,6 +1,9 @@
 package embedder
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 // Embedder produces vector embeddings from text.
 type Embedder interface {
@@ -10,8 +13,9 @@ type Embedder interface {
 }
 
 // ONNXEmbedder wraps the ONNX runtime, tokenizer, and projection layer for
-// local embedding inference.
+// local embedding inference. All methods are safe for concurrent use.
 type ONNXEmbedder struct {
+	mu      sync.Mutex
 	session *onnxSession
 	tok     *tokenizer
 	proj    *projection
@@ -54,7 +58,11 @@ func (e *ONNXEmbedder) EmbedDim() int {
 
 // Embed produces a single embedding vector for the given text.
 // Routes through tokenizeBatch for dynamic padding to actual sequence length.
+// Safe for concurrent use.
 func (e *ONNXEmbedder) Embed(text string) ([]float32, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	batch := e.tok.tokenizeBatch([]string{text})
 
 	hidden, err := e.session.infer(
@@ -70,10 +78,14 @@ func (e *ONNXEmbedder) Embed(text string) ([]float32, error) {
 }
 
 // EmbedBatch produces embedding vectors for multiple texts.
+// Safe for concurrent use.
 func (e *ONNXEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	batch := e.tok.tokenizeBatch(texts)
 

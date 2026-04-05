@@ -130,8 +130,9 @@ func (p *Pipeline) streamWithDedup(ctx context.Context, ch <-chan model.RawLog) 
 				if skipped := p.skippedLogs.Load(); skipped > 0 {
 					slog.Info("stream ended", "skipped_logs", skipped)
 				}
-				// Channel closed — flush remaining.
-				return buf.flush(ctx)
+				// Channel closed — flush remaining. Use background context
+				// since the parent ctx may already be cancelled.
+				return buf.flush(context.Background())
 			}
 			event, err := p.engine.Process(raw)
 			if err != nil {

@@ -89,7 +89,7 @@ func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, des
 			return err
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB max
 		resp.Body.Close()
 		if err != nil {
 			return err
@@ -126,6 +126,9 @@ func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, des
 func backoffDelay(attempt int, lastErr *APIError) time.Duration {
 	if lastErr != nil && lastErr.StatusCode == 429 && lastErr.retryAfter != "" {
 		if secs, err := strconv.Atoi(lastErr.retryAfter); err == nil && secs > 0 {
+			if secs > 120 {
+				secs = 120
+			}
 			return time.Duration(secs) * time.Second
 		}
 	}

@@ -121,6 +121,10 @@ func DownloadORT(destDir string) error {
 	return downloadAndExtractORT(url, destDir, archiveName, libName)
 }
 
+// maxORTLibSize is the upper bound for the extracted ORT library (300MB).
+// Protects against decompression bombs from crafted archives.
+const maxORTLibSize = 300 << 20
+
 // downloadAndExtractORT downloads a .tgz archive and extracts the ORT library from it.
 func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 	resp, err := httpClient.Get(url)
@@ -171,13 +175,30 @@ func downloadAndExtractORT(url, destDir, archiveName, libName string) error {
 		if hdr.Typeflag == tar.TypeDir || hdr.Size < 1_000_000 {
 			continue
 		}
+		// Guard against decompression bombs.
+		if hdr.Size > maxORTLibSize {
+			return fmt.Errorf("ORT library too large: %d bytes (max %d)", hdr.Size, maxORTLibSize)
+		}
 
 		// Extract to a fixed destination path (not hdr.Name) to avoid path traversal.
+		// Limit reader to prevent decompression bombs beyond declared header size.
 		dest := filepath.Join(destDir, libName)
-		if err := AtomicWriteFromReader(dest, tr); err != nil {
+		limited := io.LimitReader(tr, maxORTLibSize)
+		if err := AtomicWriteFromReader(dest, limited); err != nil {
 			return fmt.Errorf("extracting ORT library: %w", err)
 		}
-		slog.Info("ONNX Runtime installed", "path", dest)
+
+		// Verify the extracted file is at least 1MB (sanity check).
+		fi, err := os.Stat(dest)
+		if err != nil {
+			return fmt.Errorf("verifying extracted ORT library: %w", err)
+		}
+		if fi.Size() < 1_000_000 {
+			os.Remove(dest)
+			return fmt.Errorf("extracted ORT library too small: %d bytes", fi.Size())
+		}
+
+		slog.Info("ONNX Runtime installed", "path", dest, "size_mb", fi.Size()/(1<<20))
 		return nil
 	}
 

@@ -121,13 +121,17 @@ func TestNoRetryOn4xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out := New(srv.URL, WithBatchSize(1))
-	err := out.Write(context.Background(), testEvent("client-error"))
+	var errCount atomic.Int64
+	out := New(srv.URL, WithBatchSize(1), WithOnError(func(err error) {
+		errCount.Add(1)
+	}))
+	out.Write(context.Background(), testEvent("client-error"))
 
-	time.Sleep(200 * time.Millisecond)
+	// Close waits for in-flight POSTs to complete.
+	out.Close()
 
-	if err == nil {
-		t.Error("expected error for 400 response")
+	if errCount.Load() != 1 {
+		t.Errorf("expected error callback called once for 4xx, got %d", errCount.Load())
 	}
 	if attempts.Load() != 1 {
 		t.Errorf("expected exactly 1 attempt for 4xx, got %d", attempts.Load())

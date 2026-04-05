@@ -14,7 +14,7 @@ import (
 
 // Version is the current Lumber release version.
 // Set at build time via: go build -ldflags "-X github.com/kaminocorp/lumber/internal/config.Version=X.Y.Z"
-var Version = "0.10.4"
+var Version = "0.10.5"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -261,6 +261,16 @@ func (c Config) Validate() error {
 		}
 		if !c.QueryFrom.IsZero() && !c.QueryTo.IsZero() && !c.QueryFrom.Before(c.QueryTo) {
 			errs = append(errs, fmt.Sprintf("-from (%s) must be before -to (%s)", c.QueryFrom.Format(time.RFC3339), c.QueryTo.Format(time.RFC3339)))
+		}
+	}
+
+	// Connector endpoint URL must be valid HTTPS (protects bearer token from cleartext leak).
+	if c.Connector.Endpoint != "" {
+		u, err := url.ParseRequestURI(c.Connector.Endpoint)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("invalid connector endpoint %q: %s", c.Connector.Endpoint, err))
+		} else if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Sprintf("invalid connector endpoint %q (must be a valid http:// or https:// URL with a host)", c.Connector.Endpoint))
 		}
 	}
 

@@ -112,7 +112,8 @@ func (o *Output) openFile() error {
 }
 
 // rotate flushes, closes the current file, renames it to {path}.1
-// (shifting existing rotated files), and opens a new file.
+// (shifting existing rotated files), and opens a new file. If rename fails,
+// the original file is re-opened to keep the output functional.
 func (o *Output) rotate() error {
 	if err := o.w.Flush(); err != nil {
 		return err
@@ -128,7 +129,11 @@ func (o *Output) rotate() error {
 		os.Rename(from, to) // ignore errors — file may not exist
 	}
 	if err := os.Rename(o.path, o.path+".1"); err != nil {
-		return err
+		// Rename failed — re-open original file to stay functional.
+		if reopenErr := o.openFile(); reopenErr != nil {
+			return fmt.Errorf("rotate rename failed (%w) and reopen failed: %w", err, reopenErr)
+		}
+		return fmt.Errorf("rotate rename: %w (continuing with original file)", err)
 	}
 
 	o.written = 0

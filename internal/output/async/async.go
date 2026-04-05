@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultBufferSize  = 1024
+	defaultBufferSize   = 1024
 	defaultDrainTimeout = 5 * time.Second
 )
 
@@ -43,12 +43,16 @@ func WithDropOnFull() Option {
 type Async struct {
 	inner      output.Output
 	ch         chan model.CanonicalEvent
-	done       chan struct{}
-	quit       chan struct{} // signals drain goroutine to stop after timeout
+	done       chan struct{}       // closed when drain goroutine exits
+	cancel     context.CancelFunc // cancels the drain context
 	errFunc    func(error)
 	bufSize    int
 	dropOnFull bool
 	closeOnce  sync.Once
+
+	// mu protects closed flag to prevent send-on-closed-channel panics.
+	mu     sync.RWMutex
+	closed bool
 }
 
 // New wraps an output.Output in an async channel-based writer.
@@ -64,15 +68,25 @@ func New(inner output.Output, opts ...Option) *Async {
 	}
 	a.ch = make(chan model.CanonicalEvent, a.bufSize)
 	a.done = make(chan struct{})
-	a.quit = make(chan struct{})
-	go a.drain()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+
+	go a.drain(ctx)
 	return a
 }
 
 // Write sends the event into the channel. By default, blocks if the channel
 // is full (backpressure). With WithDropOnFull, returns nil immediately and
-// the event is lost.
+// the event is lost. Returns an error if the wrapper has been closed.
 func (a *Async) Write(_ context.Context, event model.CanonicalEvent) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.closed {
+		return nil // silently discard after close
+	}
+
 	if a.dropOnFull {
 		select {
 		case a.ch <- event:
@@ -86,27 +100,32 @@ func (a *Async) Write(_ context.Context, event model.CanonicalEvent) error {
 	return nil
 }
 
-// Close closes the channel, waits for the drain goroutine to finish
-// (with a timeout), then closes the inner output. If the drain goroutine
-// doesn't finish in time, it is signaled to stop so inner.Close() is not
-// called while inner.Write() is in progress.
+// Close marks the wrapper as closed, closes the channel, waits for the drain
+// goroutine to finish (with a timeout), then closes the inner output.
 func (a *Async) Close() error {
 	var err error
 	a.closeOnce.Do(func() {
+		// Prevent new writes, then close the channel.
+		a.mu.Lock()
+		a.closed = true
 		close(a.ch)
+		a.mu.Unlock()
+
+		// Wait for drain goroutine to finish.
 		select {
 		case <-a.done:
 			// Drain goroutine finished normally.
 		case <-time.After(defaultDrainTimeout):
-			slog.Warn("async output drain timed out")
-			// Tell the drain goroutine to stop issuing new Write calls.
-			close(a.quit)
-			// Give it a moment to notice and exit.
-			select {
-			case <-a.done:
-			case <-time.After(500 * time.Millisecond):
-				slog.Warn("async drain goroutine did not exit after quit signal")
+			// Cancel in-flight inner.Write calls so drain can exit.
+			a.cancel()
+			remaining := len(a.ch)
+			if remaining > 0 {
+				slog.Warn("async output drain timed out, events lost", "dropped", remaining)
+			} else {
+				slog.Warn("async output drain timed out")
 			}
+			// Wait for drain goroutine to actually exit before closing inner.
+			<-a.done
 		}
 		err = a.inner.Close()
 	})
@@ -114,17 +133,11 @@ func (a *Async) Close() error {
 }
 
 // drain reads events from the channel and writes them to the inner output.
-// It exits when the channel is closed (normal) or when quit is signaled (timeout).
-func (a *Async) drain() {
+// It exits when the channel is closed and fully drained.
+func (a *Async) drain(ctx context.Context) {
 	defer close(a.done)
 	for event := range a.ch {
-		// Check quit signal before starting a new write.
-		select {
-		case <-a.quit:
-			return
-		default:
-		}
-		if err := a.inner.Write(context.Background(), event); err != nil {
+		if err := a.inner.Write(ctx, event); err != nil {
 			a.errFunc(err)
 		}
 	}

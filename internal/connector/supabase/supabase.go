@@ -117,7 +117,7 @@ func (c *Connector) Query(ctx context.Context, cfg connector.ConnectorConfig, pa
 		baseURL = defaultEndpoint
 	}
 	client := httpclient.New(baseURL, cfg.APIKey)
-	path := "/v1/projects/" + projectRef + "/analytics/endpoints/logs.all"
+	path := "/v1/projects/" + url.PathEscape(projectRef) + "/analytics/endpoints/logs.all"
 	tables := parseTables(cfg)
 
 	// Default time range: last 1 hour.
@@ -191,7 +191,7 @@ func (c *Connector) Stream(ctx context.Context, cfg connector.ConnectorConfig) (
 		baseURL = defaultEndpoint
 	}
 	client := httpclient.New(baseURL, cfg.APIKey)
-	path := "/v1/projects/" + projectRef + "/analytics/endpoints/logs.all"
+	path := "/v1/projects/" + url.PathEscape(projectRef) + "/analytics/endpoints/logs.all"
 	tables := parseTables(cfg)
 
 	pollInterval := defaultPollInterval

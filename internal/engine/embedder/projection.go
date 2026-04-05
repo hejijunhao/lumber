@@ -91,7 +91,12 @@ func loadProjection(path string) (*projection, error) {
 }
 
 // apply projects a single vector from inDim to outDim.
+// Panics are avoided by checking input length.
 func (p *projection) apply(vec []float32) []float32 {
+	if len(vec) < p.inDim {
+		// Short vector — return zero vector rather than panic.
+		return make([]float32, p.outDim)
+	}
 	out := make([]float32, p.outDim)
 	for i := 0; i < p.outDim; i++ {
 		row := p.weights[i*p.inDim : (i+1)*p.inDim]
