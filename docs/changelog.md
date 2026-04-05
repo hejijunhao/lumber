@@ -2,6 +2,7 @@
 
 ## Index
 
+- [0.10.3](#0103--2026-04-05) — Pre-production review fixes: nil deref in URL validation, goroutine leak, credential redaction, signal handler leak, config validation gaps
 - [0.10.2](#0102--2026-04-05) — Production-readiness hardening: HTTP timeouts, path-traversal guard, run() refactor, context respect, input validation, NO_COLOR
 - [0.10.1](#0101--2026-04-05) — Post-review fixes: context leak, dead GOOS check, silent parse error, filepath.Dir, stdlib helpers, scanner error logging
 - [0.10.0](#0100--2026-04-05) — Interactive CLI: setup wizard, stdin/file connectors, download extraction, config validation, auto-detect piped input
@@ -23,6 +24,36 @@
 - [0.2.1](#021--2026-02-19) — ONNX Runtime integration: session lifecycle, raw inference, dynamic tensor discovery
 - [0.2.0](#020--2026-02-19) — Model download pipeline: Makefile target, tokenizer config, vocab path
 - [0.1.0](#010--2026-02-19) — Project scaffolding: module structure, pipeline skeleton, classifier, compactor, and default taxonomy
+
+---
+
+## 0.10.3 — 2026-04-05
+
+**Pre-production review fixes (Phase 10, Section 14)**
+
+Six issues identified in production-readiness review, all fixed. Addresses a potential crash, goroutine leaks, credential exposure in logs, and missing config validation. No breaking changes to public API.
+
+### Fixed
+
+- **Nil pointer dereference in webhook URL validation** — `url.ParseRequestURI` can return `nil` URL on certain malformed inputs. Both `wizard.go` (line 404) and `config.go` (line 254) accessed `u.Scheme`/`u.Host` in the same boolean expression as the nil check, risking a panic. Split into separate `if` branches: check error first, then access fields. Affects wizard webhook prompt and config validation.
+- **Signal handler goroutine leak** — The signal-handling goroutine in `main.go` entered a `select` waiting for a second signal or shutdown timeout, but had no exit path when the pipeline completed normally (e.g., query mode finishes, file connector hits EOF). The goroutine blocked forever after `run()` returned. Added a `shutdownDone` channel that is closed on all exit paths, giving the goroutine a clean exit case in both `select` blocks.
+- **Incomplete URL redaction leaking credentials** — `redactURL()` stripped query parameters but did not redact embedded userinfo credentials (`https://user:secret@host/path`). Also returned the raw URL unmodified on parse failure, which could leak malformed URLs containing secrets. Now strips `User` field and returns `"(invalid URL)"` on parse error.
+- **Goroutine stall in stdin and file connectors** — Both `stdin.Stream()` and `file.Stream()` goroutines only checked context cancellation inside the channel-send `select`. If context was cancelled while `scanner.Scan()` blocked (e.g., named pipe with no data), the goroutine wouldn't notice until the next line arrived. Added a `ctx.Done()` fast-exit check at the top of each loop iteration.
+- **Missing `QueryFrom < QueryTo` validation** — The wizard validated time ordering but `config.Validate()` did not. CLI flag users could pass `-from 2026-03-01T00:00:00Z -to 2026-02-01T00:00:00Z` without error, producing zero-result or erroring queries at runtime. Added ordering check when both times are set.
+- **Missing `LogLevel` enum validation** — `Verbosity` and `Mode` were validated against known values, but `LogLevel` accepted any string. A typo like `LUMBER_LOG_LEVEL=deubg` silently fell through to the default handler. Added enum check for `debug|info|warn|error`.
+
+### Files changed
+
+| File | Action | What |
+|------|--------|------|
+| `internal/cli/wizard.go` | modified | Split webhook URL validation into two-step nil-safe check |
+| `internal/config/config.go` | modified | Nil-safe webhook validation, `QueryFrom < QueryTo` check, `LogLevel` enum, version bump |
+| `internal/config/config_test.go` | modified | Added `LogLevel` field to `validConfig()`, new tests for reversed query range and invalid log level |
+| `cmd/lumber/main.go` | modified | `shutdownDone` channel for signal goroutine lifecycle, credential-safe `redactURL()` |
+| `internal/connector/stdin/stdin.go` | modified | Fast-exit `ctx.Done()` check at top of scan loop |
+| `internal/connector/file/file.go` | modified | Fast-exit `ctx.Done()` check at top of scan loop |
+
+**New files: 0. Modified files: 6. Total: 6.**
 
 ---
 

@@ -186,6 +186,7 @@ func validConfig(t *testing.T) Config {
 	}
 	return Config{
 		Mode:      "stream",
+		LogLevel:  "info",
 		Connector: ConnectorConfig{Provider: "vercel", APIKey: "tok_123"},
 		Engine: EngineConfig{
 			ModelPath:           filepath.Join(dir, "model.onnx"),
@@ -453,6 +454,32 @@ func TestValidate_QueryModeMissingBoth(t *testing.T) {
 	msg := err.Error()
 	if !strings.Contains(msg, "-from") || !strings.Contains(msg, "-to") {
 		t.Fatalf("expected error to mention both '-from' and '-to', got: %v", err)
+	}
+}
+
+func TestValidate_QueryModeReversedRange(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Mode = "query"
+	cfg.QueryFrom = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	cfg.QueryTo = time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) // before From
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for reversed query time range")
+	}
+	if !strings.Contains(err.Error(), "must be before") {
+		t.Fatalf("expected error to mention ordering, got: %v", err)
+	}
+}
+
+func TestValidate_InvalidLogLevel(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.LogLevel = "verbose"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid log level")
+	}
+	if !strings.Contains(err.Error(), "invalid log level") {
+		t.Fatalf("expected error to mention log level, got: %v", err)
 	}
 }
 

@@ -56,6 +56,12 @@ func (c *Connector) Stream(ctx context.Context, _ connector.ConnectorConfig) (<-
 	go func() {
 		defer close(ch)
 		for scanner.Scan() {
+			// Fast-exit: check context before processing the scanned line.
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			line := scanner.Text()
 			if line == "" {
 				continue

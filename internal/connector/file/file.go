@@ -53,6 +53,12 @@ func (c *Connector) Stream(ctx context.Context, cfg connector.ConnectorConfig) (
 		scanner.Buffer(make([]byte, 0, maxLineSize), maxLineSize)
 
 		for scanner.Scan() {
+			// Fast-exit: check context before processing the scanned line.
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			line := scanner.Text()
 			if line == "" {
 				continue

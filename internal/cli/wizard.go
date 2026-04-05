@@ -402,7 +402,10 @@ func promptOutputOptions(cfg *config.Config, source string) error {
 					Placeholder("https://example.com/logs").
 					Validate(func(s string) error {
 						u, err := url.ParseRequestURI(s)
-						if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+						if err != nil {
+							return fmt.Errorf("invalid URL: %w", err)
+						}
+						if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 							return fmt.Errorf("invalid URL: must be a valid http:// or https:// URL with a host")
 						}
 						return nil

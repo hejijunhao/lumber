@@ -14,7 +14,7 @@ import (
 
 // Version is the current Lumber release version.
 // Set at build time via: go build -ldflags "-X github.com/kaminocorp/lumber/internal/config.Version=X.Y.Z"
-var Version = "0.10.2"
+var Version = "0.10.3"
 
 // Config holds all Lumber configuration.
 type Config struct {
@@ -224,6 +224,13 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Sprintf("invalid verbosity %q (must be minimal|standard|full)", c.Engine.Verbosity))
 	}
 
+	// Log level enum.
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		errs = append(errs, fmt.Sprintf("invalid log level %q (must be debug|info|warn|error)", c.LogLevel))
+	}
+
 	// Dedup window non-negative.
 	if c.Engine.DedupWindow < 0 {
 		errs = append(errs, fmt.Sprintf("dedup window must be non-negative, got %s", c.Engine.DedupWindow))
@@ -247,12 +254,17 @@ func (c Config) Validate() error {
 		if c.QueryTo.IsZero() {
 			errs = append(errs, "-to is required in query mode (RFC3339 format, e.g. 2026-02-24T01:00:00Z)")
 		}
+		if !c.QueryFrom.IsZero() && !c.QueryTo.IsZero() && !c.QueryFrom.Before(c.QueryTo) {
+			errs = append(errs, fmt.Sprintf("-from (%s) must be before -to (%s)", c.QueryFrom.Format(time.RFC3339), c.QueryTo.Format(time.RFC3339)))
+		}
 	}
 
 	// Webhook URL must be a valid HTTP(S) URL with a host.
 	if c.Output.WebhookURL != "" {
 		u, err := url.ParseRequestURI(c.Output.WebhookURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("invalid webhook URL %q: %s", c.Output.WebhookURL, err))
+		} else if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			errs = append(errs, fmt.Sprintf("invalid webhook URL %q (must be a valid http:// or https:// URL with a host)", c.Output.WebhookURL))
 		}
 	}

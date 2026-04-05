@@ -170,10 +170,15 @@ func run() error {
 
 	sigCh := make(chan os.Signal, 2) // buffer 2 to catch second signal
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	shutdownDone := make(chan struct{})
 	go func() {
-		sig := <-sigCh
-		slog.Info("shutting down", "signal", sig, "timeout", cfg.ShutdownTimeout)
-		cancel()
+		select {
+		case sig := <-sigCh:
+			slog.Info("shutting down", "signal", sig, "timeout", cfg.ShutdownTimeout)
+			cancel()
+		case <-shutdownDone:
+			return
+		}
 
 		// Shutdown timer — force exit if drain exceeds timeout.
 		timer := time.NewTimer(cfg.ShutdownTimeout)
@@ -186,6 +191,8 @@ func run() error {
 		case <-timer.C:
 			slog.Error("shutdown timeout exceeded, forcing exit", "timeout", cfg.ShutdownTimeout)
 			os.Exit(1)
+		case <-shutdownDone:
+			return
 		}
 	}()
 
@@ -207,15 +214,18 @@ func run() error {
 			Limit: cfg.QueryLimit,
 		}
 		if err := p.Query(ctx, connCfg, params); err != nil {
+			close(shutdownDone)
 			return fmt.Errorf("query failed: %w", err)
 		}
 	default: // "stream"
 		slog.Info("starting stream", "connector", cfg.Connector.Provider)
 		if err := p.Stream(ctx, connCfg); err != nil && !errors.Is(err, context.Canceled) {
+			close(shutdownDone)
 			return fmt.Errorf("pipeline error: %w", err)
 		}
 	}
 
+	close(shutdownDone)
 	return nil
 }
 
@@ -239,12 +249,15 @@ func isTerminal(f *os.File) bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-// redactURL removes query parameters from a URL for safe logging.
-// Returns the original string if parsing fails.
+// redactURL removes query parameters and embedded credentials from a URL for safe logging.
+// Returns a safe placeholder if parsing fails to avoid leaking malformed URLs with secrets.
 func redactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return raw
+		return "(invalid URL)"
+	}
+	if u.User != nil {
+		u.User = url.User("REDACTED")
 	}
 	if u.RawQuery != "" {
 		u.RawQuery = "REDACTED"
