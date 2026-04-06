@@ -5,149 +5,117 @@
 <h1 align="center">Lumber</h1>
 
 <p align="center">
-  <strong>High-performance log normalization pipeline written in Go.</strong><br/>
-  Raw logs go in — from any provider, any format.<br/>
-  Structured, canonical, token-efficient events come out.
+  <strong>Turn messy logs into structured events. Locally. Instantly.</strong>
 </p>
 
 <p align="center">
-  <a href="#quickstart">Quickstart</a> ·
-  <a href="#how-it-works">How It Works</a> ·
-  <a href="#library-usage">Library API</a> ·
-  <a href="#connectors">Connectors</a> ·
-  <a href="#taxonomy">Taxonomy</a> ·
-  <a href="docs/integration-guide.md">Integration Guide</a> ·
+  <code>v0.10.6</code>&ensp;|&ensp;Apache 2.0&ensp;|&ensp;Go 1.24+&ensp;|&ensp;No cloud dependencies
+</p>
+
+<p align="center">
+  <a href="#-get-started">Get Started</a>&ensp;&bull;&ensp;
+  <a href="#-how-it-works">How It Works</a>&ensp;&bull;&ensp;
+  <a href="#-use-as-a-go-library">Library API</a>&ensp;&bull;&ensp;
+  <a href="#-connectors">Connectors</a>&ensp;&bull;&ensp;
   <a href="docs/changelog.md">Changelog</a>
 </p>
 
-<p align="center">
-  <code>v0.10.6</code> · Apache 2.0 · Go 1.24+
-</p>
-
 ---
 
-## Why
-
-Every log provider has a different API, auth mechanism, and response format. Every application logs differently. Lumber normalizes all of it into a single schema using a local embedding model and semantic classification — no cloud API calls, no LLM dependency.
-
-This matters most for AI agent workflows that consume logs. Raw log dumps waste tokens, break on inconsistent formats, and require per-source integration code. Lumber solves that.
-
----
-
-## How It Works
+Lumber is a log normalization pipeline. It takes raw logs from **any source** — cloud providers, local files, stdin — and classifies each line into a **structured canonical event** using a local AI embedding model. No API keys needed. Runs entirely on your machine.
 
 ```
-Raw logs (Vercel, Fly.io, Supabase, …)
-   ↓  connectors
-Embed → Classify → Canonicalize → Compact
-   ↓  engine
-Structured canonical events (JSON)
-```
-
-1. **Connectors** ingest raw logs from providers via a unified interface (stream or query)
-2. **Embedder** converts each log line into a 1024-dim vector using a local ONNX model (~23MB, CPU-only)
-3. **Classifier** compares the vector against 42 pre-embedded taxonomy labels via cosine similarity
-4. **Compactor** strips noise, truncates stack traces, and deduplicates repeated events
-
-A raw log like this:
-
-```
-ERROR [2026-02-19 12:00:00] UserService — connection refused (host=db-primary, port=5432)
-```
-
-Becomes:
-
-```json
-{
-  "type": "ERROR",
-  "category": "connection_failure",
-  "severity": "error",
-  "timestamp": "2026-02-19T12:00:00Z",
-  "summary": "UserService — connection refused (host=db-primary)",
-  "confidence": 0.91
-}
+             your logs                            Lumber output
+                                                  
+ ERROR [2026-02-19] UserService        {
+   — connection refused                   "type": "ERROR",
+   (host=db-primary, port=5432)    →      "category": "connection_failure",
+                                          "severity": "error",
+                                          "summary": "UserService — connection refused",
+                                          "confidence": 0.91
+                                        }
 ```
 
 ---
 
-## Install
+## Why Lumber?
 
-### Pre-built binaries (recommended)
+| Problem | How Lumber solves it |
+|---|---|
+| Every log provider has a different format | Connectors normalize ingestion; one schema out |
+| Every app logs differently | Semantic classification — meaning, not pattern matching |
+| Raw logs waste LLM tokens | Compact, structured output designed for agent consumption |
+| Cloud classification APIs add latency and cost | 23MB local model, ~5ms per log, fully offline |
 
-Download the latest release for your platform from
-[GitHub Releases](https://github.com/kaminocorp/lumber/releases):
+---
 
-| Platform | Archive |
-|----------|---------|
-| Linux x86_64 | `lumber-vX.Y.Z-linux-amd64.tar.gz` |
-| Linux ARM64 | `lumber-vX.Y.Z-linux-arm64.tar.gz` |
-| macOS Apple Silicon | `lumber-vX.Y.Z-darwin-arm64.tar.gz` |
-| macOS Intel | `lumber-vX.Y.Z-darwin-amd64.tar.gz` |
+## Get Started
 
-Extract and run:
+### Option A: Try it right now (pipe any log file)
+
+```bash
+# 1. Clone and build
+git clone https://github.com/kaminocorp/lumber.git && cd lumber
+make download-model && make build
+
+# 2. Classify logs
+cat /var/log/system.log | ./bin/lumber
+```
+
+That's it. Each line prints as a classified JSON event.
+
+### Option B: Interactive setup wizard
+
+```bash
+./bin/lumber
+```
+
+Run with no arguments — the wizard walks you through source selection, credentials, output options, and downloads model files automatically.
+
+### Option C: Download a pre-built release
+
+Grab the latest binary for your platform from [GitHub Releases](https://github.com/kaminocorp/lumber/releases). The tarball is self-contained — binary, model, and runtime included.
 
 ```bash
 tar xzf lumber-vX.Y.Z-linux-amd64.tar.gz
 cd lumber-vX.Y.Z-linux-amd64
-bin/lumber -version
+cat /var/log/app.log | bin/lumber
 ```
 
-The release tarball is self-contained — binary, model files, and ONNX
-Runtime library are all included. No additional downloads required.
+> **Supported platforms:** Linux x86_64, Linux ARM64, macOS Apple Silicon, macOS Intel
 
-### Build from source
-
-Requires Go 1.24+ and curl.
-
-```bash
-git clone https://github.com/kaminocorp/lumber.git
-cd lumber
-make download-model   # fetches model files + ONNX Runtime for your platform
-make build
-bin/lumber -version
-```
-
-### Go library
+### Option D: Use as a Go library
 
 ```bash
 go get github.com/kaminocorp/lumber
 ```
 
-See [Library Usage](#library-usage) below.
+```go
+l, err := lumber.New(lumber.WithAutoDownload()) // downloads ~50MB on first use, cached after
+if err != nil {
+    log.Fatal(err)
+}
+defer l.Close()
+
+event, _ := l.Classify("ERROR: connection refused to db-primary:5432")
+fmt.Println(event.Type, event.Category) // ERROR connection_failure
+```
 
 ---
 
-## Quickstart
+## Common Usage Patterns
 
-### Interactive setup
-
-Run `lumber` with no arguments to launch the setup wizard. It walks through connector selection, credentials, output destinations, and auto-downloads model files if needed.
-
-```bash
-./bin/lumber
-```
-
-### Pipe logs from stdin
-
-```bash
-cat /var/log/app.log | ./bin/lumber
-# or
-tail -f /var/log/app.log | ./bin/lumber
-```
-
-Lumber auto-detects piped input and classifies each line.
-
-### Stream from a provider
+### Stream from a cloud provider
 
 ```bash
 export LUMBER_CONNECTOR=vercel
-export LUMBER_API_KEY=your-token-here
-export LUMBER_VERCEL_PROJECT_ID=prj_your-project-id
+export LUMBER_API_KEY=your-token
+export LUMBER_VERCEL_PROJECT_ID=prj_xxx
 
 ./bin/lumber
 ```
 
-### Classify a local file
+### Classify a local log file
 
 ```bash
 ./bin/lumber -connector file -file /var/log/app.log
@@ -157,149 +125,43 @@ export LUMBER_VERCEL_PROJECT_ID=prj_your-project-id
 
 ```bash
 ./bin/lumber -mode query \
+  -connector vercel \
   -from 2026-02-24T00:00:00Z \
   -to 2026-02-24T01:00:00Z
 ```
 
-### Check version
+### Output to file + webhook simultaneously
 
 ```bash
-./bin/lumber -version
+export LUMBER_OUTPUT_FILE=/var/log/lumber/events.jsonl
+export LUMBER_WEBHOOK_URL=https://hooks.example.com/lumber
+./bin/lumber
 ```
 
 ---
 
-## CLI Flags
-
-Flags override environment variables when set explicitly.
+## How It Works
 
 ```
-lumber [flags]
-
-  -mode string        Pipeline mode: stream or query
-  -connector string   Connector: vercel, flyio, supabase
-  -from string        Query start time (RFC3339)
-  -to string          Query end time (RFC3339)
-  -limit int          Query result limit
-  -verbosity string   Verbosity: minimal, standard, full
-  -pretty             Pretty-print JSON output
-  -log-level string   Log level: debug, info, warn, error
-  -version            Print version and exit
+Raw logs (Vercel, Fly.io, Supabase, stdin, file)
+   |
+   |  1. CONNECTORS — unified ingestion from any source
+   v
+   |  2. EMBED — log line -> 1024-dim vector (local ONNX model, ~5ms)
+   v
+   |  3. CLASSIFY — cosine similarity against 42 taxonomy labels
+   v
+   |  4. COMPACT — strip noise, truncate stack traces, deduplicate
+   |
+   v
+Structured canonical events (NDJSON)
 ```
 
-Examples:
+The embedding model ([MongoDB LEAF](https://huggingface.co/MongoDB/mdbr-leaf-mt), 23M params) runs locally via ONNX Runtime. No external calls. No GPU needed. Works on an 8GB MacBook Air.
 
-```bash
-# Stream from Fly.io with debug logging
-./bin/lumber -connector flyio -log-level debug
+### The Taxonomy
 
-# Query last hour, pretty-printed
-./bin/lumber -mode query -from 2026-02-24T07:00:00Z -to 2026-02-24T08:00:00Z -pretty
-
-# Minimal verbosity for token-efficient output
-./bin/lumber -verbosity minimal
-```
-
----
-
-## Connectors
-
-Five connectors are implemented. Each produces `RawLog` entries that feed into the classification engine.
-
-### Cloud providers
-
-| Connector | Env Var | Description |
-|-----------|---------|-------------|
-| **Vercel** | `LUMBER_CONNECTOR=vercel` | REST API, project-scoped tokens |
-| **Fly.io** | `LUMBER_CONNECTOR=flyio` | HTTP logs API |
-| **Supabase** | `LUMBER_CONNECTOR=supabase` | Analytics API, multi-table queries |
-
-### Local sources
-
-| Connector | Env Var | Description |
-|-----------|---------|-------------|
-| **stdin** | Auto-detected | Pipe logs directly: `cat app.log \| lumber` |
-| **file** | `LUMBER_CONNECTOR=file` | Read from a local log file |
-
-### Provider configuration
-
-```bash
-# Vercel
-export LUMBER_CONNECTOR=vercel
-export LUMBER_API_KEY=your-vercel-token
-export LUMBER_VERCEL_PROJECT_ID=prj_xxx
-export LUMBER_VERCEL_TEAM_ID=team_xxx   # optional
-
-# Fly.io
-export LUMBER_CONNECTOR=flyio
-export LUMBER_API_KEY=your-fly-token
-export LUMBER_FLY_APP_NAME=your-app-name
-
-# Supabase
-export LUMBER_CONNECTOR=supabase
-export LUMBER_API_KEY=your-supabase-service-key
-export LUMBER_SUPABASE_PROJECT_REF=your-project-ref
-export LUMBER_SUPABASE_TABLES=edge_logs,postgres_logs  # optional, defaults to all
-```
-
----
-
-## Configuration
-
-### Core settings
-
-| Variable | Default | Description |
-|---|---|---|
-| `LUMBER_CONNECTOR` | `vercel` | Log provider: `vercel`, `flyio`, `supabase` |
-| `LUMBER_API_KEY` | — | Provider API key/token |
-| `LUMBER_ENDPOINT` | — | Provider API endpoint URL override |
-| `LUMBER_MODE` | `stream` | Pipeline mode: `stream` or `query` |
-| `LUMBER_VERBOSITY` | `standard` | Output verbosity: `minimal`, `standard`, `full` |
-| `LUMBER_OUTPUT` | `stdout` | Output destination |
-| `LUMBER_OUTPUT_PRETTY` | `false` | Pretty-print JSON output |
-
-### Engine settings
-
-| Variable | Default | Description |
-|---|---|---|
-| `LUMBER_MODEL_PATH` | `models/model_quantized.onnx` | Path to ONNX model file |
-| `LUMBER_VOCAB_PATH` | `models/vocab.txt` | Path to tokenizer vocabulary |
-| `LUMBER_PROJECTION_PATH` | `models/2_Dense/model.safetensors` | Path to projection weights |
-| `LUMBER_CONFIDENCE_THRESHOLD` | `0.5` | Min confidence to classify (0–1) |
-| `LUMBER_DEDUP_WINDOW` | `5s` | Dedup window duration (`0` disables) |
-| `LUMBER_MAX_BUFFER_SIZE` | `1000` | Max events buffered before force flush |
-
-### Operational settings
-
-| Variable | Default | Description |
-|---|---|---|
-| `LUMBER_LOG_LEVEL` | `info` | Internal log level: `debug`, `info`, `warn`, `error` |
-| `LUMBER_SHUTDOWN_TIMEOUT` | `10s` | Max drain time on shutdown |
-| `LUMBER_POLL_INTERVAL` | provider default | Polling interval for stream mode |
-
-### Provider-specific settings
-
-| Variable | Provider | Description |
-|---|---|---|
-| `LUMBER_VERCEL_PROJECT_ID` | Vercel | Vercel project ID |
-| `LUMBER_VERCEL_TEAM_ID` | Vercel | Vercel team ID (optional) |
-| `LUMBER_FLY_APP_NAME` | Fly.io | Fly.io application name |
-| `LUMBER_SUPABASE_PROJECT_REF` | Supabase | Supabase project reference |
-| `LUMBER_SUPABASE_TABLES` | Supabase | Comma-separated log table list |
-
-### Verbosity levels
-
-| Level | Behavior |
-|---|---|
-| `minimal` | Raw logs truncated to 200 characters |
-| `standard` | Raw logs truncated to 2000 characters |
-| `full` | Complete raw logs preserved |
-
----
-
-## Taxonomy
-
-Lumber ships with 42 leaf labels organized under 8 top-level categories. Every log is classified into exactly one leaf. The taxonomy is opinionated by design — a finite label set makes downstream consumption predictable.
+Every log is classified into one of **42 leaf labels** under 8 categories:
 
 | Category | Labels |
 |---|---|
@@ -312,66 +174,18 @@ Lumber ships with 42 leaf labels organized under 8 top-level categories. Every l
 | **DATA** | query_executed, migration, replication |
 | **SCHEDULED** | cron_started, cron_completed, cron_failed |
 
-Classification uses cosine similarity between the log's embedding vector and pre-embedded taxonomy label descriptions. Labels below the confidence threshold (default 0.5) are marked `UNCLASSIFIED`.
+Logs below the confidence threshold (default 0.5) are marked `UNCLASSIFIED`.
 
 ---
 
-## Embedding Model
+## Use as a Go Library
 
-Lumber uses [MongoDB LEAF (mdbr-leaf-mt)](https://huggingface.co/MongoDB/mdbr-leaf-mt), a 23M parameter text embedding model. Runs locally via ONNX Runtime — no external API calls, no GPU required.
-
-| Property | Value |
-|---|---|
-| Size | ~23MB (int8 quantized) |
-| Output dimension | 1024 (384-dim transformer + learned projection) |
-| Tokenizer | WordPiece (30,522 tokens, lowercase) |
-| Max sequence length | 128 tokens |
-| Runtime | ONNX Runtime via [onnxruntime-go](https://github.com/yalue/onnxruntime_go) |
-
----
-
-## Library Usage
-
-Lumber can be imported as a Go library. Classify log text directly in your application — no subprocess, no stdout parsing, no network calls at runtime.
-
-```bash
-go get github.com/kaminocorp/lumber
-```
-
-```go
-import "github.com/kaminocorp/lumber/pkg/lumber"
-```
-
-### Auto-download (recommended for getting started)
-
-```go
-// Downloads ~35-60MB of model files on first call.
-// Cached at ~/.cache/lumber — subsequent calls are instant.
-l, err := lumber.New(lumber.WithAutoDownload())
-if err != nil {
-    log.Fatal(err)
-}
-defer l.Close()
-
-event, _ := l.Classify("ERROR: connection refused to db-primary:5432")
-fmt.Println(event.Type, event.Category) // ERROR connection_failure
-```
-
-### Pre-downloaded models (recommended for production/Docker)
-
-```go
-// Use make download-model or Dockerfile COPY stage to prepare the directory.
-l, err := lumber.New(lumber.WithModelDir("/opt/lumber/models"))
-if err != nil {
-    log.Fatal(err)
-}
-defer l.Close()
-```
+Classify logs directly in your Go application — no subprocess, no network calls.
 
 ### Batch classification
 
 ```go
-// Single batched ONNX inference call — ~10x faster per line than looping Classify
+// Single ONNX inference call — ~10x faster than looping Classify
 events, _ := l.ClassifyBatch([]string{
     "ERROR: connection refused",
     "GET /api/users 200 OK 12ms",
@@ -393,25 +207,17 @@ event, _ := l.ClassifyLog(lumber.Log{
 })
 ```
 
-### Taxonomy introspection
-
-```go
-for _, cat := range l.Taxonomy() {
-    fmt.Printf("%s: %d labels\n", cat.Name, len(cat.Labels))
-}
-```
-
-### API summary
+### API reference
 
 | Method | Description | Latency |
 |--------|-------------|---------|
-| `New(opts...)` | Initialize engine, load model, pre-embed taxonomy | ~100–300ms (once) |
-| `Classify(text)` | Classify a single log line | ~5–10ms |
-| `ClassifyBatch(texts)` | Batch classify (single ONNX call) | ~50–80ms / 100 lines |
-| `ClassifyLog(log)` | Classify with timestamp, source, metadata | ~5–10ms |
-| `ClassifyLogs(logs)` | Batch classify structured logs | ~50–80ms / 100 logs |
-| `Taxonomy()` | Return the full taxonomy tree (read-only) | ~0ms |
-| `Close()` | Release ONNX runtime resources | — |
+| `New(opts...)` | Initialize engine, load model, pre-embed taxonomy | ~100-300ms (once) |
+| `Classify(text)` | Classify a single log line | ~5-10ms |
+| `ClassifyBatch(texts)` | Batch classify (single ONNX call) | ~50-80ms / 100 lines |
+| `ClassifyLog(log)` | Classify with timestamp, source, metadata | ~5-10ms |
+| `ClassifyLogs(logs)` | Batch classify structured logs | ~50-80ms / 100 logs |
+| `Taxonomy()` | Return the full taxonomy tree | ~0ms |
+| `Close()` | Release ONNX runtime resources | - |
 
 ### Options
 
@@ -419,40 +225,158 @@ for _, cat := range l.Taxonomy() {
 |--------|---------|-------------|
 | `WithAutoDownload()` | disabled | Auto-fetch model + ORT on first use, cache locally |
 | `WithModelDir(dir)` | `"models"` | Directory containing model files |
-| `WithModelPaths(m, v, p)` | — | Explicit paths for model, vocab, projection |
+| `WithModelPaths(m, v, p)` | - | Explicit paths for model, vocab, projection |
 | `WithCacheDir(dir)` | `~/.cache/lumber` | Override auto-download cache location |
-| `WithConfidenceThreshold(t)` | `0.5` | Min cosine similarity for classification (0–1) |
+| `WithConfidenceThreshold(t)` | `0.5` | Min cosine similarity for classification (0-1) |
 | `WithVerbosity(v)` | `"standard"` | Summary compaction: `minimal`, `standard`, `full` |
 
-The `Lumber` instance is safe for concurrent use from multiple goroutines. Create once at startup, reuse across requests, close on shutdown.
+The `Lumber` instance is safe for concurrent use. Create once at startup, share across goroutines, close on shutdown.
 
-For integration patterns (monitoring agents, HTTP middleware, batch workers), performance tuning, and troubleshooting, see the **[Integration Guide](docs/integration-guide.md)**.
+For integration patterns (monitoring agents, HTTP middleware, batch workers) and performance tuning, see the **[Integration Guide](docs/integration-guide.md)**.
 
 ---
 
-## Output Destinations
+## Connectors
 
-Lumber supports multiple simultaneous output destinations.
+### Cloud providers
 
-| Destination | Env Var | CLI Flag | Behavior |
-|---|---|---|---|
-| **stdout** | (always on) | — | NDJSON to stdout (synchronous) |
-| **File** | `LUMBER_OUTPUT_FILE` | `-output-file` | NDJSON to file with optional rotation |
-| **Webhook** | `LUMBER_WEBHOOK_URL` | `-webhook-url` | Batched HTTP POST with retry |
+| Connector | Config | Required |
+|-----------|--------|----------|
+| **Vercel** | `LUMBER_CONNECTOR=vercel` | `LUMBER_API_KEY`, `LUMBER_VERCEL_PROJECT_ID` |
+| **Fly.io** | `LUMBER_CONNECTOR=flyio` | `LUMBER_API_KEY`, `LUMBER_FLY_APP_NAME` |
+| **Supabase** | `LUMBER_CONNECTOR=supabase` | `LUMBER_API_KEY`, `LUMBER_SUPABASE_PROJECT_REF` |
 
-File and webhook outputs run asynchronously — they don't stall the pipeline. Webhook uses drop-on-full semantics (lossy by design for non-critical destinations).
+### Local sources
+
+| Connector | Config | Notes |
+|-----------|--------|-------|
+| **stdin** | Auto-detected when input is piped | `cat app.log \| lumber` |
+| **file** | `LUMBER_CONNECTOR=file`, `-file PATH` | Reads a local log file |
+
+<details>
+<summary><strong>Full provider configuration examples</strong></summary>
 
 ```bash
-# Stream to stdout + file + webhook simultaneously
-export LUMBER_OUTPUT_FILE=/var/log/lumber/events.jsonl
-export LUMBER_OUTPUT_FILE_MAX_SIZE=104857600  # 100MB rotation
-export LUMBER_WEBHOOK_URL=https://hooks.example.com/lumber
-./bin/lumber
+# Vercel
+export LUMBER_CONNECTOR=vercel
+export LUMBER_API_KEY=your-vercel-token
+export LUMBER_VERCEL_PROJECT_ID=prj_xxx
+export LUMBER_VERCEL_TEAM_ID=team_xxx   # optional
+
+# Fly.io
+export LUMBER_CONNECTOR=flyio
+export LUMBER_API_KEY=your-fly-token
+export LUMBER_FLY_APP_NAME=your-app-name
+
+# Supabase
+export LUMBER_CONNECTOR=supabase
+export LUMBER_API_KEY=your-supabase-service-key
+export LUMBER_SUPABASE_PROJECT_REF=your-project-ref
+export LUMBER_SUPABASE_TABLES=edge_logs,postgres_logs  # optional
+```
+
+</details>
+
+---
+
+## CLI Reference
+
+```
+lumber [flags]
+
+  -mode string        Pipeline mode: stream or query (default: stream)
+  -connector string   Connector: vercel, flyio, supabase, file
+  -file string        Log file path (for file connector)
+  -from string        Query start time (RFC3339)
+  -to string          Query end time (RFC3339)
+  -limit int          Query result limit
+  -verbosity string   Output: minimal, standard, full (default: standard)
+  -pretty             Pretty-print JSON output
+  -log-level string   Log level: debug, info, warn, error (default: info)
+  -version            Print version and exit
 ```
 
 ---
 
-## Project Structure
+## Configuration
+
+All settings can be set via environment variables. CLI flags override env vars.
+
+<details>
+<summary><strong>Core settings</strong></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `LUMBER_CONNECTOR` | `vercel` | Log provider |
+| `LUMBER_API_KEY` | - | Provider API key/token |
+| `LUMBER_ENDPOINT` | - | Provider API endpoint override |
+| `LUMBER_MODE` | `stream` | Pipeline mode: `stream` or `query` |
+| `LUMBER_VERBOSITY` | `standard` | Output verbosity: `minimal`, `standard`, `full` |
+| `LUMBER_OUTPUT_PRETTY` | `false` | Pretty-print JSON output |
+
+</details>
+
+<details>
+<summary><strong>Engine settings</strong></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `LUMBER_MODEL_PATH` | `models/model_quantized.onnx` | Path to ONNX model file |
+| `LUMBER_VOCAB_PATH` | `models/vocab.txt` | Path to tokenizer vocabulary |
+| `LUMBER_PROJECTION_PATH` | `models/2_Dense/model.safetensors` | Path to projection weights |
+| `LUMBER_CONFIDENCE_THRESHOLD` | `0.5` | Min confidence to classify (0-1) |
+| `LUMBER_DEDUP_WINDOW` | `5s` | Dedup window duration (`0` disables) |
+| `LUMBER_MAX_BUFFER_SIZE` | `1000` | Max events buffered before flush |
+
+</details>
+
+<details>
+<summary><strong>Output settings</strong></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `LUMBER_OUTPUT_FILE` | - | NDJSON file output path |
+| `LUMBER_OUTPUT_FILE_MAX_SIZE` | `0` | File rotation size in bytes (0 = no rotation) |
+| `LUMBER_WEBHOOK_URL` | - | Webhook HTTP POST endpoint |
+| `LUMBER_WEBHOOK_HEADER_*` | - | Custom headers, e.g. `LUMBER_WEBHOOK_HEADER_AUTHORIZATION` |
+
+Multiple outputs run simultaneously. File and webhook are async and won't stall the pipeline.
+
+</details>
+
+<details>
+<summary><strong>Operational settings</strong></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `LUMBER_LOG_LEVEL` | `info` | Internal log level: `debug`, `info`, `warn`, `error` |
+| `LUMBER_SHUTDOWN_TIMEOUT` | `10s` | Max drain time on shutdown |
+| `LUMBER_POLL_INTERVAL` | provider default | Polling interval for stream mode |
+
+</details>
+
+### Verbosity levels
+
+| Level | Behavior |
+|---|---|
+| `minimal` | Raw logs truncated to 200 characters |
+| `standard` | Raw logs truncated to 2000 characters |
+| `full` | Complete raw logs preserved |
+
+---
+
+## Development
+
+```bash
+make download-model  # Fetch ONNX model + tokenizer from HuggingFace
+make build           # Build binary to bin/lumber
+make test            # Run all tests
+make lint            # Run golangci-lint
+make clean           # Remove build artifacts
+```
+
+<details>
+<summary><strong>Project structure</strong></summary>
 
 ```
 cmd/lumber/              CLI entrypoint + interactive setup wizard
@@ -488,50 +412,27 @@ models/                  ONNX model files (downloaded via make)
 docs/                    Architecture, plans, completion notes, changelog
 ```
 
----
-
-## Development
-
-```bash
-make build           # Build binary to bin/lumber
-make test            # Run all tests
-make lint            # Run golangci-lint
-make clean           # Remove build artifacts
-make download-model  # Fetch ONNX model + tokenizer from HuggingFace
-```
+</details>
 
 ---
 
-## Status
+## Roadmap
 
-Lumber is production-ready for its core use case: classifying logs from supported providers and local sources into a structured canonical schema.
-
-### Completed
-
-- [x] ONNX Runtime integration and local embedding (~23MB model, CPU-only)
-- [x] Pure-Go WordPiece tokenizer, mean pooling, dense projection (1024-dim)
-- [x] 42-leaf taxonomy with semantic pre-embedding — 100% accuracy on 153-entry corpus
-- [x] Log connectors: Vercel, Fly.io, Supabase, stdin, local file
-- [x] Shared HTTP client with retry, rate limiting, response size limits
-- [x] Pipeline integration (stream + query modes) with buffering and dedup
-- [x] Multi-output architecture (stdout + file rotation + webhook with retry)
-- [x] Public library API (`pkg/lumber`) — safe for concurrent use
-- [x] Interactive setup wizard with model auto-download
-- [x] Distribution: multi-platform binaries, GitHub Releases, Go module
-- [x] Production hardening: thread safety, path injection protection, credential redaction, NaN/Inf guards, decompression bomb protection, graceful shutdown
-
-### Roadmap
-
+- [x] Local ONNX embedding + 42-leaf taxonomy (100% accuracy on 153-entry corpus)
+- [x] Connectors: Vercel, Fly.io, Supabase, stdin, file
+- [x] Multi-output: stdout, file rotation, webhook with retry
+- [x] Public Go library API with concurrent safety
+- [x] Interactive setup wizard + model auto-download
+- [x] Production hardening (thread safety, input validation, graceful shutdown)
 - [ ] Additional connectors (AWS CloudWatch, Datadog, Grafana Loki)
 - [ ] HTTP server mode
 - [ ] Adaptive taxonomy (self-growing/trimming)
-- [ ] Field extraction (structured field parsing from unstructured text)
-- [ ] Performance benchmarks
+- [ ] Field extraction from unstructured text
 
-See [docs/changelog.md](docs/changelog.md) for detailed release notes and [docs/plans/post-beta-proposals.md](docs/plans/post-beta-proposals.md) for the full roadmap.
+See [docs/changelog.md](docs/changelog.md) for release notes and [docs/plans/post-beta-proposals.md](docs/plans/post-beta-proposals.md) for the full roadmap.
 
 ---
 
 <p align="center">
-  <a href="LICENSE">Apache 2.0</a>
+  Built by <a href="https://github.com/kaminocorp">Kamino Corporation</a>&ensp;|&ensp;<a href="LICENSE">Apache 2.0</a>
 </p>
